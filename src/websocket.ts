@@ -6,6 +6,7 @@
 
 import { RpcStub } from "./core.js";
 import { RpcTransport, RpcSession, RpcSessionOptions } from "./rpc.js";
+import type { WireMessage } from "./codec.js";
 
 export function newWebSocketRpcSession(
     webSocket: WebSocket | string, localMain?: any, options?: RpcSessionOptions): RpcStub {
@@ -41,6 +42,7 @@ export function newWorkersWebSocketRpcResponse(
 class WebSocketTransport implements RpcTransport {
   constructor (webSocket: WebSocket) {
     this.#webSocket = webSocket;
+    try { this.#webSocket.binaryType = "arraybuffer"; } catch (_) {}
 
     if (webSocket.readyState === WebSocket.CONNECTING) {
       this.#sendQueue = [];
@@ -59,16 +61,17 @@ class WebSocketTransport implements RpcTransport {
     webSocket.addEventListener("message", (event: MessageEvent<any>) => {
       if (this.#error) {
         // Ignore further messages.
-      } else if (typeof event.data === "string") {
+      } else if (typeof event.data === "string" || event.data instanceof ArrayBuffer || event.data instanceof Uint8Array) {
+        const msg: WireMessage = event.data;
         if (this.#receiveResolver) {
-          this.#receiveResolver(event.data);
+          this.#receiveResolver(msg);
           this.#receiveResolver = undefined;
           this.#receiveRejecter = undefined;
         } else {
-          this.#receiveQueue.push(event.data);
+          this.#receiveQueue.push(msg);
         }
       } else {
-        this.#receivedError(new TypeError("Received non-string message from WebSocket."));
+        this.#receivedError(new TypeError("Received unsupported message type from WebSocket."));
       }
     });
 
@@ -82,13 +85,13 @@ class WebSocketTransport implements RpcTransport {
   }
 
   #webSocket: WebSocket;
-  #sendQueue?: string[];  // only if not opened yet
-  #receiveResolver?: (message: string) => void;
+  #sendQueue?: WireMessage[];  // only if not opened yet
+  #receiveResolver?: (message: WireMessage) => void;
   #receiveRejecter?: (err: any) => void;
-  #receiveQueue: string[] = [];
+  #receiveQueue: WireMessage[] = [];
   #error?: any;
 
-  async send(message: string): Promise<void> {
+  async send(message: WireMessage): Promise<void> {
     if (this.#sendQueue === undefined) {
       this.#webSocket.send(message);
     } else {
@@ -97,13 +100,13 @@ class WebSocketTransport implements RpcTransport {
     }
   }
 
-  async receive(): Promise<string> {
+  async receive(): Promise<WireMessage> {
     if (this.#receiveQueue.length > 0) {
       return this.#receiveQueue.shift()!;
     } else if (this.#error) {
       throw this.#error;
     } else {
-      return new Promise<string>((resolve, reject) => {
+      return new Promise<WireMessage>((resolve, reject) => {
         this.#receiveResolver = resolve;
         this.#receiveRejecter = reject;
       });

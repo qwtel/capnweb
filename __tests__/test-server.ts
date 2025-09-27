@@ -15,16 +15,26 @@
 import { WebSocketServer, AddressInfo } from 'ws'
 import type { TestProject } from 'vitest/node'
 import * as url from 'url'
-import { newWebSocketRpcSession, nodeHttpBatchRpcResponse } from '../src/index.js';
+import { Codec, JSON_CODEC, newWebSocketRpcSession, nodeHttpBatchRpcResponse } from '../src/index.js';
 import { TestTarget } from './test-util.js';
 import http from "node:http";
+import { V8_CODEC } from '../src/contrib/codec-v8.js';
 
-let httpServer: http.Server | undefined;
-let wsServer: WebSocketServer | undefined
+type Server = {
+  httpServer?: http.Server;
+  wsServer?: WebSocketServer;
+}
+let jsonServer: Server = {};
+let v8Server: Server = {};
 
 export async function setup(project: TestProject) {
+  await setupImpl(project, JSON_CODEC, jsonServer);
+  await setupImpl(project, V8_CODEC, v8Server);
+}
+
+async function setupImpl(project: TestProject, codec: Codec, x: Server) {
   // Run standard HTTP server on a port.
-  httpServer = http.createServer((request, response) => {
+  x.httpServer = http.createServer((request, response) => {
     if (request.headers.upgrade?.toLowerCase() === 'websocket') {
       // Ignore, should be handled by WebSocketServer instead.
       return;
@@ -42,17 +52,17 @@ export async function setup(project: TestProject) {
 
   // Arrange to handle WebSockets as well, using the `ws` package. You can skip this if you only
   // want to handle batch requests.
-  wsServer = new WebSocketServer({ server: httpServer })
-  wsServer.on('connection', (ws) => {
+  x.wsServer = new WebSocketServer({ server: x.httpServer })
+  x.wsServer.on('connection', (ws) => {
     // The `as any` here is because the `ws` module seems to have its own `WebSocket` type
     // declaration that's incompatible with the standard one. In practice, though, they are
     // compatible enough for Cap'n Web!
-    newWebSocketRpcSession(ws as any, new TestTarget());
+    newWebSocketRpcSession(ws as any, new TestTarget(), { codec });
   })
 
   // Listen on an ephemeral port for testing purposes.
-  httpServer.listen(0);
-  let addr = httpServer.address() as AddressInfo;
+  x.httpServer.listen(0);
+  let addr = x.httpServer.address() as AddressInfo;
 
   // Provide the server address to tests.
   //
@@ -62,15 +72,20 @@ export async function setup(project: TestProject) {
 }
 
 export async function teardown() {
-  if (wsServer) {
+  await teardownImpl(jsonServer!);
+  await teardownImpl(v8Server!);
+}
+
+async function teardownImpl(x: Server) {
+  if (x.wsServer) {
     // NOTE: close() calls a callback when done, but it waits for all clients to disconnect. If
     //   we wait on it here, vitest hangs on shutdown whenever there's a client that failed to
     //   disconnect. This is annoying and pointless, so we don't wait.
-    wsServer.close();
-    wsServer = undefined;
+    x.wsServer.close();
+    x.wsServer = undefined;
   }
-  if (httpServer) {
-    httpServer.close();
-    httpServer = undefined;
+  if (x.httpServer) {
+    x.httpServer.close();
+    x.httpServer = undefined;
   }
 }

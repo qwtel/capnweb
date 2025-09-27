@@ -2,7 +2,8 @@
 // Licensed under the MIT license found in the LICENSE.txt file or at:
 //     https://opensource.org/license/mit
 
-import { StubHook, RpcPayload, typeForRpc, RpcStub, RpcPromise, LocatedPromise, RpcTarget, PropertyPath, unwrapStubAndPath } from "./core.js";
+import { StubHook, RpcPayload, RpcStub, RpcPromise, LocatedPromise, RpcTarget, PropertyPath, unwrapStubAndPath, JSON_CODEC } from "./core.js";
+import type { Codec, WireMessage } from "./codec.js";
 
 export type ImportId = number;
 export type ExportId = number;
@@ -65,7 +66,8 @@ interface FromBase64 {
 // actually converting to a string. (The name is meant to be the opposite of "Evaluator", which
 // implements the opposite direction.)
 export class Devaluator {
-  private constructor(private exporter: Exporter, private source: RpcPayload | undefined) {}
+  private constructor(private exporter: Exporter, private source: RpcPayload | undefined,
+                      private codec: Codec) {}
 
   // Devaluate the given value.
   // * value: The value to devaluate.
@@ -76,9 +78,11 @@ export class Devaluator {
   //
   // Returns: The devaluated value, ready to be JSON-serialized.
   public static devaluate(
-      value: unknown, parent?: object, exporter: Exporter = NULL_EXPORTER, source?: RpcPayload)
+      value: unknown, parent?: object, exporter: Exporter = NULL_EXPORTER, source?: RpcPayload,
+      codec: Codec = JSON_CODEC)
       : unknown {
-    let devaluator = new Devaluator(exporter, source);
+    // Lazy acquire codec implementation to classify types consistently.
+    let devaluator = new Devaluator(exporter, source, codec);
     try {
       return devaluator.devaluateImpl(value, parent, 0);
     } catch (err) {
@@ -101,7 +105,7 @@ export class Devaluator {
           "Serialization exceeded maximum allowed depth. (Does the message contain cycles?)");
     }
 
-    let kind = typeForRpc(value);
+    let kind = this.codec.typeForRpc(value);
     switch (kind) {
       case "unsupported": {
         let msg;
@@ -114,6 +118,7 @@ export class Devaluator {
       }
 
       case "primitive":
+      case "raw":
         // Supported directly by JSON.
         return value;
 
@@ -153,7 +158,8 @@ export class Devaluator {
         }
       }
 
-      case "error": {
+      case "error":
+      case "error-raw": {
         let e = <Error>value;
 
         // TODO:
@@ -164,6 +170,9 @@ export class Devaluator {
         let rewritten = this.exporter.onSendError(e);
         if (rewritten) {
           e = rewritten;
+        }
+        if (kind === "error-raw") {
+          return e;
         }
 
         let result = ["error", e.name, e.message];
@@ -244,8 +253,8 @@ export class Devaluator {
  * Serialize a value, using Cap'n Web's underlying serialization. This won't be able to serialize
  * RPC stubs, but it will support basic data types.
  */
-export function serialize(value: unknown): string {
-  return JSON.stringify(Devaluator.devaluate(value));
+export function serialize(value: unknown, codec: Codec = JSON_CODEC): WireMessage {
+  return codec.encode(Devaluator.devaluate(value, codec));
 }
 
 // =======================================================================================
@@ -533,8 +542,8 @@ export class Evaluator {
 /**
  * Deserialize a value serialized using serialize().
  */
-export function deserialize(value: string): unknown {
-  let payload = new Evaluator(NULL_IMPORTER).evaluate(JSON.parse(value));
+export function deserialize(value: WireMessage, codec: Codec = JSON_CODEC): unknown {
+  let payload = new Evaluator(NULL_IMPORTER).evaluate(codec.decode(value));
   payload.dispose();  // should be no-op but just in case
   return payload.value;
 }

@@ -13,6 +13,9 @@ import { newHttpBatchRpcSession as newHttpBatchRpcSessionImpl,
 import { newMessagePortRpcSession as newMessagePortRpcSessionImpl } from "./messageport.js";
 import { forceInitMap } from "./map.js";
 
+export { JsonCodec, JSON_CODEC } from "./codec.js";
+export type { Codec } from "./codec.js";
+
 forceInitMap();
 
 // Re-export public API types.
@@ -118,7 +121,7 @@ export let newWebSocketRpcSession:<T extends Serializable<T> = Empty>
  * (it will always be set to POST) and the body (which the RPC system will fill in).
  */
 export let newHttpBatchRpcSession:<T extends Serializable<T>>
-    (urlOrRequest: string | Request, init?: RequestInit) => RpcStub<T> =
+    (urlOrRequest: string | Request, init?: RequestInit, options?: RpcSessionOptions) => RpcStub<T> =
     <any>newHttpBatchRpcSessionImpl;
 
 /**

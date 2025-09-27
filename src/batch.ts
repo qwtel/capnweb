@@ -68,9 +68,10 @@ class BatchClientTransport implements RpcTransport {
 }
 
 export function newHttpBatchRpcSession(
-    urlOrRequest: string | Request, options?: RpcSessionOptions): RpcStub {
+    urlOrRequest: string | Request, init?: RequestInit, options?: RpcSessionOptions): RpcStub {
   let sendBatch: SendBatchFunc = async (batch: string[]) => {
     let response = await fetch(urlOrRequest, {
+      ...init,
       method: "POST",
       body: batch.join("\n"),
     });

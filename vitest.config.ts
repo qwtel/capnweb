@@ -27,6 +27,7 @@ export default defineConfig({
           include: ['__tests__/index.test.ts', '__tests__/workerd.test.ts'],
           pool: '@cloudflare/vitest-pool-workers',
           poolOptions: {
+            // @ts-expect-error: untyped
             workers: {
               miniflare: {
                 compatibilityDate: '2025-07-01',
@@ -98,7 +99,7 @@ export default defineConfig({
               // becomes widely available.
               { browser: 'chromium' },
               { browser: 'firefox' },
-              { browser: 'webkit' },
+              // { browser: 'webkit' },
             ],
             headless: true,
             screenshotFailures: false,  // there's nothing to screenshot

@@ -3,7 +3,8 @@
 //     https://opensource.org/license/mit
 
 import { StubHook, RpcPayload, RpcStub, PropertyPath, PayloadStubHook, ErrorStubHook, RpcTarget, unwrapStubAndPath } from "./core.js";
-import { Devaluator, Evaluator, ExportId, ImportId, Exporter, Importer, serialize } from "./serialize.js";
+import { Devaluator, Evaluator, ExportId, ImportId, Exporter, Importer } from "./serialize.js";
+import { Codec, JsonCodec, WireMessage } from "./codec.js";
 
 /**
  * Interface for an RPC transport, which is a simple bidirectional message stream. Implement this
@@ -13,7 +14,7 @@ export interface RpcTransport {
   /**
    * Sends a message to the other end.
    */
-  send(message: string): Promise<void>;
+  send(message: string | Uint8Array | ArrayBuffer): Promise<void>;
 
   /**
    * Receives a message sent by the other end.
@@ -23,7 +24,7 @@ export interface RpcTransport {
    * If there are no outstanding calls (and none are made in the future), then the error does not
    * propagate anywhere -- this is considered a "clean" shutdown.
    */
-  receive(): Promise<string>;
+  receive(): Promise<string | Uint8Array | ArrayBuffer>;
 
   /**
    * Indicates that the RPC system has suffered an error that prevents the session from continuing.
@@ -298,6 +299,12 @@ export type RpcSessionOptions = {
    * to serialize the error with the stack omitted.
    */
   onSendError?: (error: Error) => Error | void;
+
+  /**
+   * Selects the underlying encoding for RPC frames.
+   * Provide a `Codec` instance (e.g. new V8Codec()) or omit for JSON.
+   */
+  codec?: Codec;
 };
 
 class RpcSessionImpl implements Importer, Exporter {
@@ -440,18 +447,21 @@ class RpcSessionImpl implements Importer, Exporter {
         payload => {
           // We don't transfer ownership of stubs in the payload since the payload
           // belongs to the hook which sticks around to handle pipelined requests.
-          let value = Devaluator.devaluate(payload.value, undefined, this, payload);
+          let value = Devaluator.devaluate(
+              payload.value, undefined, this, payload, this.codec);
           this.send(["resolve", exportId, value]);
         },
         error => {
-          this.send(["reject", exportId, Devaluator.devaluate(error, undefined, this)]);
+          this.send(["reject", exportId, Devaluator
+              .devaluate(error, undefined, this, undefined, this.codec)]);
         }
       ).catch(
         error => {
           // If serialization failed, report the serialization error, which should
           // itself always be serializable.
           try {
-            this.send(["reject", exportId, Devaluator.devaluate(error, undefined, this)]);
+            this.send(["reject", exportId, Devaluator
+                .devaluate(error, undefined, this, undefined, this.codec)]);
           } catch (error2) {
             // TODO: Shouldn't happen, now what?
             this.abort(error2);
@@ -505,15 +515,21 @@ class RpcSessionImpl implements Importer, Exporter {
     return this.exports[idx]?.hook;
   }
 
+  get codec(): Codec {
+    const c = this.options.codec;
+    if (c) return c;
+    return new JsonCodec();
+  }
+
   private send(msg: any) {
     if (this.abortReason !== undefined) {
       // Ignore sends after we've aborted.
       return;
     }
 
-    let msgText: string;
+    let wire: WireMessage;
     try {
-      msgText = JSON.stringify(msg);
+      wire = this.codec.encode(msg);
     } catch (err) {
       // If JSON stringification failed, there's something wrong with the devaluator, as it should
       // not allow non-JSONable values to be injected in the first place.
@@ -521,7 +537,7 @@ class RpcSessionImpl implements Importer, Exporter {
       throw err;
     }
 
-    this.transport.send(msgText)
+    this.transport.send(wire)
         // If send fails, abort the connection, but don't try to send an abort message since
         // that'll probably also fail.
         .catch(err => this.abort(err, false));
@@ -596,8 +612,9 @@ class RpcSessionImpl implements Importer, Exporter {
 
     if (trySendAbortMessage) {
       try {
-        this.transport.send(JSON.stringify(["abort", Devaluator
-            .devaluate(error, undefined, this)]))
+        const wire = this.codec.encode(["abort", Devaluator
+            .devaluate(error, undefined, this, undefined, this.codec)]);
+        this.transport.send(wire)
             .catch(err => {});
       } catch (err) {
         // ignore, probably the whole reason we're aborting is because the transport is broken
@@ -644,7 +661,8 @@ class RpcSessionImpl implements Importer, Exporter {
 
   private async readLoop(abortPromise: Promise<never>) {
     while (!this.abortReason) {
-      let msg = JSON.parse(await Promise.race([this.transport.receive(), abortPromise]));
+      const wire = await Promise.race([this.transport.receive(), abortPromise]);
+      let msg = this.codec.decode(wire);
       if (this.abortReason) break;  // check again before processing
 
       if (msg instanceof Array) {
@@ -760,7 +778,7 @@ export class RpcSession {
   constructor(transport: RpcTransport, localMain?: any, options: RpcSessionOptions = {}) {
     let mainHook: StubHook;
     if (localMain) {
-      mainHook = new PayloadStubHook(RpcPayload.fromAppReturn(localMain));
+      mainHook = new PayloadStubHook(RpcPayload.fromAppReturn(localMain, options.codec));
     } else {
       mainHook = new ErrorStubHook(new Error("This connection has no main object."));
     }

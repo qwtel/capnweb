@@ -5,6 +5,15 @@
 import { RpcStub } from "./core.js";
 import { RpcTransport, RpcSession, RpcSessionOptions } from "./rpc.js";
 
+// Generic postMessage-style endpoint.
+// Security concerns (e.g., targetOrigin) are intentionally not modeled here.
+export interface Endpoint {
+  postMessage(message: any, ...args: any[]): any;
+  addEventListener(type: "message" | "messageerror", listener: (event: any) => void, ...args: any[]): any;
+  start?: () => void;
+  close?: () => void;
+}
+
 // Start a MessagePort session given a MessagePort or a pair of MessagePorts.
 //
 // `localMain` is the main RPC interface to expose to the peer. Returns a stub for the main
@@ -16,57 +25,69 @@ export function newMessagePortRpcSession(
   return rpc.getRemoteMain();
 }
 
+// Start an RPC session over any generic postMessage-style endpoint.
+export function newEndpointRpcSession(
+    endpoint: Endpoint, localMain?: any, options?: RpcSessionOptions): RpcStub {
+  let transport = new MessagePortTransport(endpoint);
+  let rpc = new RpcSession(transport, localMain, options);
+  return rpc.getRemoteMain();
+}
+
 class MessagePortTransport implements RpcTransport {
-  constructor (port: MessagePort) {
-    this.#port = port;
+  constructor (endpoint: Endpoint) {
+    this.#endpoint = endpoint;
 
-    // Start listening for messages
-    port.start();
+    // Start listening for messages if supported (e.g., MessagePort).
+    endpoint.start?.();
 
-    port.addEventListener("message", (event: MessageEvent<any>) => {
+    endpoint.addEventListener("message", (event: any) => {
       if (this.#error) {
         // Ignore further messages.
-      } else if (event.data === null) {
+      } else if (event?.data === null) {
         // Peer is signaling that they're closing the connection
         this.#receivedError(new Error("Peer closed MessagePort connection."));
-      } else if (typeof event.data === "string") {
+      } else if (
+          typeof event?.data === "string" ||
+          event?.data instanceof ArrayBuffer ||
+          event?.data instanceof Uint8Array) {
+        const msg: string | Uint8Array | ArrayBuffer = event.data;
         if (this.#receiveResolver) {
-          this.#receiveResolver(event.data);
+          this.#receiveResolver(msg);
           this.#receiveResolver = undefined;
           this.#receiveRejecter = undefined;
         } else {
-          this.#receiveQueue.push(event.data);
+          this.#receiveQueue.push(msg);
         }
       } else {
-        this.#receivedError(new TypeError("Received non-string message from MessagePort."));
+        this.#receivedError(new TypeError("Received unsupported message from MessagePort."));
       }
     });
 
-    port.addEventListener("messageerror", (event: MessageEvent) => {
+    endpoint.addEventListener("messageerror", (_event: any) => {
       this.#receivedError(new Error("MessagePort message error."));
     });
   }
 
-  #port: MessagePort;
-  #receiveResolver?: (message: string) => void;
+  #endpoint: Endpoint;
+  #receiveResolver?: (message: string | Uint8Array | ArrayBuffer) => void;
   #receiveRejecter?: (err: any) => void;
-  #receiveQueue: string[] = [];
+  #receiveQueue: (string | Uint8Array | ArrayBuffer)[] = [];
   #error?: any;
 
-  async send(message: string): Promise<void> {
+  async send(message: string | Uint8Array | ArrayBuffer): Promise<void> {
     if (this.#error) {
       throw this.#error;
     }
-    this.#port.postMessage(message);
+    this.#endpoint.postMessage(message);
   }
 
-  async receive(): Promise<string> {
+  async receive(): Promise<string | Uint8Array | ArrayBuffer> {
     if (this.#receiveQueue.length > 0) {
       return this.#receiveQueue.shift()!;
     } else if (this.#error) {
       throw this.#error;
     } else {
-      return new Promise<string>((resolve, reject) => {
+      return new Promise<string | Uint8Array | ArrayBuffer>((resolve, reject) => {
         this.#receiveResolver = resolve;
         this.#receiveRejecter = reject;
       });
@@ -76,12 +97,15 @@ class MessagePortTransport implements RpcTransport {
   abort?(reason: any): void {
     // Send close signal to peer before closing
     try {
-      this.#port.postMessage(null);
+      this.#endpoint.postMessage(null);
     } catch (err) {
       // Ignore errors when sending close signal - port might already be closed
     }
 
-    this.#port.close();
+    // Close if supported (e.g., MessagePort).
+    try {
+      this.#endpoint.close?.();
+    } catch (_err) {}
 
     if (!this.#error) {
       this.#error = reason;

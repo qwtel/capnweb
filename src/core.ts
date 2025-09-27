@@ -2,7 +2,9 @@
 // Licensed under the MIT license found in the LICENSE.txt file or at:
 //     https://opensource.org/license/mit
 
-import type { RpcTargetBranded, __RPC_TARGET_BRAND } from "./types.js";
+import type { __RPC_TARGET_BRAND } from "./types.js";
+import { RpcTarget, Codec, JsonCodec } from "./codec.js";
+export { RpcTarget, type Codec, JsonCodec };
 
 // Polyfill Symbol.dispose for browsers that don't support it yet
 if (!Symbol.dispose) {
@@ -12,107 +14,15 @@ if (!Symbol.asyncDispose) {
   (Symbol as any).asyncDispose = Symbol.for('asyncDispose');
 }
 
-let workersModuleName = navigator.userAgent === "Cloudflare-Workers" ? "cloudflare:workers" : null;
-let workersModule: any;
-if (workersModuleName) {
-  workersModule = await import(/* @vite-ignore */workersModuleName);
-}
-
 export interface RpcTarget {
   [__RPC_TARGET_BRAND]: never;
 };
 
-export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
-
 export type PropertyPath = (string | number)[];
 
-type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
-    "bigint" | "bytes" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" |
-    "undefined";
 
-export function typeForRpc(value: unknown): TypeForRpc {
-  switch (typeof value) {
-    case "boolean":
-    case "number":
-    case "string":
-      return "primitive";
-
-    case "undefined":
-      return "undefined";
-
-    case "object":
-    case "function":
-      // Test by prototype, below.
-      break;
-
-    case "bigint":
-      return "bigint";
-
-    default:
-      return "unsupported";
-  }
-
-  // Ugh JavaScript, why is `typeof null` equal to "object" but null isn't otherwise anything like
-  // an object?
-  if (value === null) {
-    return "primitive";
-  }
-
-  // Aside from RpcTarget, we generally don't support serializing *subclasses* of serializable
-  // types, so we switch on the exact prototype rather than use `instanceof` here.
-  let prototype = Object.getPrototypeOf(value);
-  switch (prototype) {
-    case Object.prototype:
-      return "object";
-
-    case Function.prototype:
-      return "function";
-
-    case Array.prototype:
-      return "array";
-
-    case Date.prototype:
-      return "date";
-
-    case Uint8Array.prototype:
-      return "bytes";
-
-    // TODO: All other structured clone types.
-
-    case RpcStub.prototype:
-      return "stub";
-
-    case RpcPromise.prototype:
-      return "rpc-promise";
-
-    // TODO: Promise<T> or thenable
-
-    default:
-      if (workersModule) {
-        // TODO: We also need to match `RpcPromise` and `RpcProperty`, but they currently aren't
-        //   exported by cloudflare:workers.
-        if (prototype == workersModule.RpcStub.prototype ||
-            value instanceof workersModule.ServiceStub) {
-          return "rpc-target";
-        } else if (prototype == workersModule.RpcPromise.prototype ||
-                   prototype == workersModule.RpcProperty.prototype) {
-          // Like rpc-target, but should be wrapped in RpcPromise, so that it can be pull()ed,
-          // which will await the thenable.
-          return "rpc-thenable";
-        }
-      }
-
-      if (value instanceof RpcTarget) {
-        return "rpc-target";
-      }
-
-      if (value instanceof Error) {
-        return "error";
-      }
-
-      return "unsupported";
-  }
-}
+export const JSON_CODEC = new JsonCodec();
+export const typeForRpc = JSON_CODEC.typeForRpc;
 
 function mapNotLoaded(): never {
   throw new Error("RPC map() implementation was not loaded.");
@@ -609,8 +519,8 @@ export class RpcPayload {
   // to have the sender and recipient end up sharing the same mutable object. `value` will not be
   // touched again after the call returns synchronously (returns a promise) -- by that point,
   // the value has either been copied or serialized to the wire.
-  public static fromAppParams(value: unknown): RpcPayload {
-    return new RpcPayload(value, "params");
+  public static fromAppParams(value: unknown, codec?: Codec): RpcPayload {
+    return new RpcPayload(value, "params", codec);
   }
 
   // Create a payload from a value return from an RPC implementation by the app.
@@ -618,14 +528,14 @@ export class RpcPayload {
   // Unlike fromAppParams(), in this case the payload takes ownership of all stubs in `value`, and
   // may hold onto `value` for an arbitrarily long time (e.g. to serve pipelined requests). It
   // will still avoid modifying `value` and will make a deep copy if it is delivered locally.
-  public static fromAppReturn(value: unknown): RpcPayload {
-    return new RpcPayload(value, "return");
+  public static fromAppReturn(value: unknown, codec?: Codec): RpcPayload {
+    return new RpcPayload(value, "return", codec);
   }
 
   // Combine an array of payloads into a single payload whose value is an array. Ownership of all
   // stubs is transferred from the inputs to the outputs, hence if the output is disposed, the
   // inputs should not be. (In case of exception, nothing is disposed, though.)
-  public static fromArray(array: RpcPayload[]): RpcPayload {
+  public static fromArray(array: RpcPayload[], codec?: Codec): RpcPayload {
     let stubs: RpcStub[] = [];
     let promises: LocatedPromise[] = [];
 
@@ -651,7 +561,7 @@ export class RpcPayload {
       resultArray.push(payload.value);
     }
 
-    return new RpcPayload(resultArray, "owned", stubs, promises);
+    return new RpcPayload(resultArray, "owned", codec, stubs, promises);
   }
 
   // Create a payload from a value parsed off the wire using Evaluator.evaluate().
@@ -665,8 +575,8 @@ export class RpcPayload {
   // When done, the payload takes ownership of the final value and all the stubs within. It may
   // modify the value in preparation for delivery, and may deliver the value directly to the app
   // without copying.
-  public static forEvaluate(stubs: RpcStub[], promises: LocatedPromise[]) {
-    return new RpcPayload(null, "owned", stubs, promises);
+  public static forEvaluate(stubs: RpcStub[], promises: LocatedPromise[], codec?: Codec) {
+    return new RpcPayload(null, "owned", codec, stubs, promises);
   }
 
   // Deep-copy the given value, including dup()ing all stubs.
@@ -676,8 +586,9 @@ export class RpcPayload {
   // If deep-copying from a branch of some other RpcPayload, it must be provided, to make sure
   // RpcTargets found within don't get duplicate stubs.
   public static deepCopyFrom(
-      value: unknown, oldParent: object | undefined, owner: RpcPayload | null): RpcPayload {
-    let result = new RpcPayload(null, "owned", [], []);
+      value: unknown, oldParent: object | undefined, owner: RpcPayload | null, 
+      codec?: Codec): RpcPayload {
+    let result = new RpcPayload(null, "owned", codec, [], []);
     result.value = result.deepCopy(value, oldParent, "value", result, /*dupStubs=*/true, owner);
     return result;
   }
@@ -693,6 +604,9 @@ export class RpcPayload {
     // "owned": This value belongs fully to us, either because it was deserialized from the wire
     //   or because we deep-copied a value from the app.
     private source: "params" | "return" | "owned",
+
+    // The codec to use for this payload.
+    public codec: Codec = JSON_CODEC,
 
     // `stubs` and `promises` are filled in only if `value` belongs to us (`source` is "owned") and
     // so can safely be delivered to the app. If `value` came from then app in the first place,
@@ -757,17 +671,19 @@ export class RpcPayload {
   private deepCopy(
       value: unknown, oldParent: object | undefined, property: string | number, parent: object,
       dupStubs: boolean, owner: RpcPayload | null): unknown {
-    let kind = typeForRpc(value);
+    let kind = this.codec.typeForRpc(value);
     switch (kind) {
       case "unsupported":
         // This will throw later on when someone tries to do something with it.
         return value;
 
       case "primitive":
+      case "raw":
       case "bigint":
       case "date":
       case "bytes":
       case "error":
+      case "error-raw":
       case "undefined":
         // immutable, no need to copy
         // TODO: Should errors be copied if they have own properties?
@@ -1028,14 +944,16 @@ export class RpcPayload {
 
   // Recursive dispose, called only when `source` is "return".
   private disposeImpl(value: unknown, parent: object | undefined) {
-    let kind = typeForRpc(value);
+    let kind = this.codec.typeForRpc(value);
     switch (kind) {
       case "unsupported":
       case "primitive":
+      case "raw":
       case "bigint":
       case "bytes":
       case "date":
       case "error":
+      case "error-raw":
       case "undefined":
         return;
 
@@ -1114,14 +1032,16 @@ export class RpcPayload {
   }
 
   private ignoreUnhandledRejectionsImpl(value: unknown) {
-    let kind = typeForRpc(value);
+    let kind = this.codec.typeForRpc(value);
     switch (kind) {
       case "unsupported":
       case "primitive":
+      case "raw":
       case "bigint":
       case "bytes":
       case "date":
       case "error":
+      case "error-raw":
       case "undefined":
       case "function":
       case "rpc-target":
@@ -1201,7 +1121,7 @@ function followPath(value: unknown, parent: object | undefined,
       continue;
     }
 
-    let kind = typeForRpc(value);
+    let kind = owner?.codec.typeForRpc(value) ?? JSON_CODEC.typeForRpc(value);
     switch (kind) {
       case "object":
       case "function":
@@ -1246,10 +1166,12 @@ function followPath(value: unknown, parent: object | undefined,
       }
 
       case "primitive":
+      case "raw":
       case "bigint":
       case "bytes":
       case "date":
       case "error":
+      case "error-raw":
         // These have no properties that can be accessed remotely.
         value = undefined;
         break;

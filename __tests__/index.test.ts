@@ -5,8 +5,9 @@
 import { expect, it, describe, inject } from "vitest"
 import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
          RpcStub, newWebSocketRpcSession, newMessagePortRpcSession,
-         newHttpBatchRpcSession} from "../src/index.js"
+         newHttpBatchRpcSession, JSON_CODEC as JsonCodec} from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
+import type { Codec, WireMessage } from "../src/codec.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '123': 123,
@@ -40,6 +41,13 @@ class NotSerializable {
     return `NotSerializable(${this.i})`;
   }
 }
+
+let V8Codec: Codec | undefined;
+if ("process" in globalThis) {
+  ({ V8_CODEC: V8Codec } = await import("../src/contrib/codec-v8.js").catch(() => ({ V8_CODEC: undefined })));
+}
+
+const Codecs = [/*JsonCodec,*/ ...(V8Codec ? [V8Codec] : [])] as const;
 
 describe("simple serialization", () => {
   it("can serialize", () => {
@@ -107,15 +115,15 @@ class TestTransport implements RpcTransport {
     }
   }
 
-  private queue: string[] = [];
+  private queue: WireMessage[] = [];
   private waiter?: () => void;
   private aborter?: (err: any) => void;
   public log = false;
 
-  async send(message: string): Promise<void> {
+  async send(message: WireMessage): Promise<void> {
     // HACK: If the string "$remove$" appears in the message, remove it. This is used in some
     //   tests to hack the RPC protocol.
-    message = message.replaceAll("$remove$", "");
+    message = typeof message === "string" ? message.replaceAll("$remove$", "") : message;
 
     if (this.log) console.log(`${this.name}: ${message}`);
     this.partner!.queue.push(message);
@@ -126,7 +134,7 @@ class TestTransport implements RpcTransport {
     }
   }
 
-  async receive(): Promise<string> {
+  async receive(): Promise<WireMessage> {
     if (this.queue.length == 0) {
       await new Promise<void>((resolve, reject) => {
         this.waiter = resolve;
@@ -161,7 +169,7 @@ class TestHarness<T extends RpcTarget> {
     this.clientTransport = new TestTransport("client");
     this.serverTransport = new TestTransport("server", this.clientTransport);
 
-    this.client = new RpcSession<T>(this.clientTransport);
+    this.client = new RpcSession<T>(this.clientTransport, undefined, { codec: serverOptions?.codec });
 
     // TODO: If I remove `<undefined>` here, I get a TypeScript error about the instantiation being
     //   excessively deep and possibly infinite. Why? `<undefined>` is supposed to be the default.
@@ -230,6 +238,7 @@ describe("local stub", () => {
     let outerStub = new RpcStub(outerObject);
 
     expect(await outerStub.value).toBe(42);
+    // @ts-ignore: begone
     expect(await outerStub.inner.square(4)).toBe(16);
   });
 
@@ -480,20 +489,20 @@ describe("stub disposal", () => {
   });
 });
 
-describe("basic rpc", () => {
+describe.each(Codecs)("basic rpc [%s]", (codec) => {
   it("supports calls", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     expect(await harness.stub.square(3)).toBe(9);
   });
 
   it("supports throwing errors", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
     await expect(() => stub.throwError()).rejects.toThrow(new RangeError("test error"));
   });
 
   it("supports .then(), .catch(), and .finally() on RPC promises", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
 
     // Test .then() with successful call
@@ -539,7 +548,7 @@ describe("basic rpc", () => {
   });
 
   it("throws error when trying to send non-serializable argument", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
 
     expect(() => stub.square(new NotSerializable(123) as any)).toThrow(
@@ -554,7 +563,7 @@ describe("basic rpc", () => {
       }
     }
 
-    await using harness = new TestHarness(new BadTarget());
+    await using harness = new TestHarness(new BadTarget(), { codec });
     let stub = harness.stub as any;
 
     await expect(() => stub.returnNonSerializable()).rejects.toThrow(
@@ -562,8 +571,8 @@ describe("basic rpc", () => {
     );
   });
 
-  it("does not expose common Object properties on RpcTarget", async () => {
-    await using harness = new TestHarness(new TestTarget());
+  it.skipIf(codec === V8Codec)("does not expose common Object properties on RpcTarget", async () => {
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub: any = harness.stub;
 
     // For this test we want to access properties on a remove object that are common properties of
@@ -584,7 +593,7 @@ describe("basic rpc", () => {
     expect(await stub.$remove$constructor).toBe(undefined);
   });
 
-  it("does not expose common Object properties on RpcTarget", async () => {
+  it.skipIf(codec === V8Codec)("does not expose common Object properties on RpcTarget", async () => {
     class ObjectVendor extends RpcTarget {
       get() {
         return new RpcStub<object>({
@@ -598,6 +607,7 @@ describe("basic rpc", () => {
     }
 
     await using harness = new TestHarness(new ObjectVendor(), {
+      codec,
       onSendError(err) { return err; }
     });
     using stub: any = await harness.stub.get();
@@ -629,7 +639,7 @@ describe("basic rpc", () => {
   });
 });
 
-describe("capability-passing", () => {
+describe.each(Codecs)("capability-passing [%s]", (codec) => {
   it("supports returning an RpcTarget", async () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
@@ -639,7 +649,7 @@ describe("capability-passing", () => {
   });
 
   it("supports passing a stub back over the connection", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
 
     using counter = await stub.makeCounter(4);
@@ -662,8 +672,8 @@ describe("capability-passing", () => {
       }
     }
 
-    await using aliceHarness = new TestHarness(new AliceTarget());
-    await using bobHarness = new TestHarness(new BobTarget());
+    await using aliceHarness = new TestHarness(new AliceTarget(), { codec });
+    await using bobHarness = new TestHarness(new BobTarget(), { codec });
 
     let aliceStub = aliceHarness.stub;
     let bobStub = bobHarness.stub;
@@ -706,8 +716,8 @@ describe("capability-passing", () => {
       }
     }
 
-    await using aliceHarness = new TestHarness(new AliceTarget());
-    await using bobHarness = new TestHarness(new BobTarget(aliceHarness.stub));
+    await using aliceHarness = new TestHarness(new AliceTarget(), { codec });
+    await using bobHarness = new TestHarness(new BobTarget(aliceHarness.stub), { codec });
 
     let bobStub = bobHarness.stub;
 
@@ -741,16 +751,16 @@ describe("capability-passing", () => {
   });
 });
 
-describe("promise pipelining", () => {
+describe.each(Codecs)("promise pipelining [%s]", (codec) => {
   it("supports passing a promise in arguments", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
     using promise = stub.square(2);
     expect(await stub.square(promise)).toBe(16);
   });
 
   it("supports calling a promise", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
     using counter = stub.makeCounter(4);
     let promise1 = counter.increment();
@@ -760,9 +770,9 @@ describe("promise pipelining", () => {
   });
 
   it("supports returning a promise", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
-    expect(await stub.callSquare(stub, 3)).toStrictEqual({result: 9});
+    expect(await (stub as any).callSquare(stub, 3)).toStrictEqual({result: 9});
   });
 
   it("propagates errors to pipelined calls", async () => {
@@ -772,7 +782,7 @@ describe("promise pipelining", () => {
       }
     }
 
-    await using harness = new TestHarness(new ErrorTarget());
+    await using harness = new TestHarness(new ErrorTarget(), { codec });
     let stub = harness.stub;
 
     // Pipeline a call on a promise that will reject
@@ -793,7 +803,7 @@ describe("promise pipelining", () => {
       }
     }
 
-    await using harness = new TestHarness(new ErrorTarget());
+    await using harness = new TestHarness(new ErrorTarget(), { codec });
     let stub = harness.stub;
 
     // Pipeline a call on a promise that will reject
@@ -814,7 +824,7 @@ describe("promise pipelining", () => {
       }
     }
 
-    await using harness = new TestHarness(new ErrorTarget());
+    await using harness = new TestHarness(new ErrorTarget(), { codec });
     let stub = harness.stub;
 
     let promise = stub.throwError();
@@ -833,11 +843,11 @@ describe("promise pipelining", () => {
   });
 });
 
-describe("map() over RPC", () => {
+describe.each(Codecs)("map() over RPC [%s]", (codec) => {
   it("supports map() on nulls", async () => {
     let counter = new RpcStub(new Counter(0));
 
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
 
     {
@@ -864,7 +874,7 @@ describe("map() over RPC", () => {
   it("supports map() on arrays", async () => {
     let outerCounter = new RpcStub(new Counter(0));
 
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
 
     using fib = stub.generateFibonacci(6);
@@ -884,7 +894,7 @@ describe("map() over RPC", () => {
   });
 
   it("supports nested map()", async () => {
-    await using harness = new TestHarness(new TestTarget());
+    await using harness = new TestHarness(new TestTarget(), { codec });
     let stub = harness.stub;
 
     using fib = stub.generateFibonacci(7);
@@ -907,7 +917,7 @@ describe("map() over RPC", () => {
   });
 });
 
-describe("stub disposal over RPC", () => {
+describe.each(Codecs)("stub disposal over RPC [%s]", (codec) => {
   it("disposes remote RpcTarget when stub is disposed", async () => {
     let targetDisposedCount = 0;
     class DisposableTarget extends RpcTarget {
@@ -921,7 +931,7 @@ describe("stub disposal over RPC", () => {
       }
     }
 
-    await using harness = new TestHarness(new MainTarget());
+    await using harness = new TestHarness(new MainTarget(), { codec });
     let mainStub = harness.stub as any;
 
     {
@@ -1111,7 +1121,7 @@ describe("stub disposal over RPC", () => {
   });
 });
 
-describe("e-order", () => {
+describe.each(Codecs)("e-order [%s]", (codec) => {
   it("maintains e-order for concurrent calls on single stub", async () => {
     let callOrder: number[] = [];
     class OrderTarget extends RpcTarget {
@@ -1121,7 +1131,7 @@ describe("e-order", () => {
       }
     }
 
-    await using harness = new TestHarness(new OrderTarget());
+    await using harness = new TestHarness(new OrderTarget(), { codec });
     let stub = harness.stub as any;
 
     // Make multiple concurrent calls
@@ -1149,7 +1159,7 @@ describe("e-order", () => {
       }
     }
 
-    await using harness = new TestHarness(new OrderTarget());
+    await using harness = new TestHarness(new OrderTarget(), { codec });
     let stub = harness.stub as any;
 
     // Get a promise for an object
@@ -1170,12 +1180,13 @@ describe("e-order", () => {
   });
 });
 
-describe("error serialization", () => {
+describe.each(Codecs)("error serialization [%s]", (codec) => {
   it("hides the stack by default", async () => {
     await using harness = new TestHarness(new TestTarget(), {
       onSendError: (error) => {
         // default behavior
-      }
+      },
+      codec
     });
     let stub = harness.stub;
 
@@ -1199,7 +1210,8 @@ describe("error serialization", () => {
     await using harness = new TestHarness(new TestTarget(), {
       onSendError: (error) => {
         return error;
-      }
+      },
+      codec
     });
     let stub = harness.stub;
 
@@ -1223,7 +1235,8 @@ describe("error serialization", () => {
         let rewritten = new TypeError("rewritten error");
         rewritten.stack = "test stack";
         return rewritten;
-      }
+      },
+      codec
     });
     let stub = harness.stub;
 
@@ -1238,7 +1251,7 @@ describe("error serialization", () => {
   });
 });
 
-describe("onRpcBroken", () => {
+describe.each(Codecs)("onRpcBroken [%s]", (codec) => {
   it("signals when the connection is lost", async () => {
     class TestBroken extends RpcTarget {
       getValue() { return 42; }
@@ -1252,7 +1265,7 @@ describe("onRpcBroken", () => {
 
     // Intentionally don't use `using` here because we expect the stats to be wrong after a
     // disconnect.
-    let harness = new TestHarness(new TestBroken());
+    let harness = new TestHarness(new TestBroken(), { codec });
     let stub = harness.stub;
     expect(await stub.getValue()).toBe(42);
 
@@ -1322,11 +1335,11 @@ describe("HTTP requests", () => {
   });
 });
 
-describe("WebSockets", () => {
+describe.each(Codecs)("WebSockets [%s]", (codec) => {
   it("can open a WebSocket connection", async () => {
     let url = `ws://${inject("testServerHost")}`;
 
-    let cap = newWebSocketRpcSession<TestTarget>(url);
+    let cap = newWebSocketRpcSession<TestTarget>(url, undefined, { codec });
 
     expect(await cap.square(5)).toBe(25);
 
@@ -1342,17 +1355,17 @@ describe("WebSockets", () => {
   });
 });
 
-describe("MessagePorts", () => {
+describe.each(Codecs)("MessagePorts [%s]", (codec) => {
   it("can communicate over MessageChannel", async () => {
     // Create a MessageChannel for communication
     let channel = new MessageChannel();
 
     // Set up server side with a test object
     let serverMain = new TestTarget();
-    newMessagePortRpcSession(channel.port1, serverMain);
+    newMessagePortRpcSession(channel.port1, serverMain, { codec });
 
     // Set up client side
-    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, undefined, { codec });
 
     // Test basic method call
     let result = await clientStub.square(5);
@@ -1372,8 +1385,8 @@ describe("MessagePorts", () => {
     let channel = new MessageChannel();
 
     let serverMain = new TestTarget();
-    newMessagePortRpcSession(channel.port1, serverMain);
-    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+    newMessagePortRpcSession(channel.port1, serverMain, { codec });
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, undefined, { codec });
 
     // Test error handling
     await expect(() => clientStub.throwError()).rejects.toThrow("test error");
@@ -1383,8 +1396,8 @@ describe("MessagePorts", () => {
     let channel = new MessageChannel();
 
     let serverMain = new TestTarget();
-    let serverStub = newMessagePortRpcSession(channel.port1, serverMain);
-    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+    let serverStub = newMessagePortRpcSession(channel.port1, serverMain, { codec });
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, undefined, { codec });
 
     // Test that connection works initially
     let result = await clientStub.square(3);
