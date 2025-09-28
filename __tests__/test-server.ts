@@ -68,7 +68,7 @@ async function setupImpl(project: TestProject, codec: Codec, x: Server) {
   //
   // We use the Node-specific `url.format` here because it automatically handles adding brackets to
   // IPv6 addresses. Unfortunately, the standard `URL` class doesn't seem to provide this.
-  project.provide("testServerHost", url.format({hostname: addr.address, port: addr.port}));
+  project.provide(`testServerHost-${codec.name}`, url.format({hostname: addr.address, port: addr.port}));
 }
 
 export async function teardown() {

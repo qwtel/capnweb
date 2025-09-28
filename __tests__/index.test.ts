@@ -5,7 +5,7 @@
 import { expect, it, describe, inject } from "vitest"
 import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
          RpcStub, newWebSocketRpcSession, newMessagePortRpcSession,
-         newHttpBatchRpcSession, JSON_CODEC as JsonCodec} from "../src/index.js"
+         newHttpBatchRpcSession, JSON_CODEC} from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 import type { Codec, WireMessage } from "../src/codec.js";
 
@@ -42,12 +42,12 @@ class NotSerializable {
   }
 }
 
-let V8Codec: Codec | undefined;
+let V8_CODEC: Codec | undefined;
 if ("process" in globalThis) {
-  ({ V8_CODEC: V8Codec } = await import("../src/contrib/codec-v8.js").catch(() => ({ V8_CODEC: undefined })));
+  ({ V8_CODEC } = await import("../src/contrib/codec-v8.js").catch(() => ({ V8_CODEC: undefined })));
 }
 
-const Codecs = [/*JsonCodec,*/ ...(V8Codec ? [V8Codec] : [])] as const;
+const Codecs = [JSON_CODEC, ...(V8_CODEC ? [V8_CODEC] : [])];
 
 describe("simple serialization", () => {
   it("can serialize", () => {
@@ -571,7 +571,7 @@ describe.each(Codecs)("basic rpc [%s]", (codec) => {
     );
   });
 
-  it.skipIf(codec === V8Codec)("does not expose common Object properties on RpcTarget", async () => {
+  it.skipIf(codec === V8_CODEC)("does not expose common Object properties on RpcTarget", async () => {
     await using harness = new TestHarness(new TestTarget(), { codec });
     let stub: any = harness.stub;
 
@@ -593,7 +593,7 @@ describe.each(Codecs)("basic rpc [%s]", (codec) => {
     expect(await stub.$remove$constructor).toBe(undefined);
   });
 
-  it.skipIf(codec === V8Codec)("does not expose common Object properties on RpcTarget", async () => {
+  it.skipIf(codec === V8_CODEC)("does not expose common Object properties on RpcTarget", async () => {
     class ObjectVendor extends RpcTarget {
       get() {
         return new RpcStub<object>({
@@ -1322,7 +1322,7 @@ describe.each(Codecs)("onRpcBroken [%s]", (codec) => {
 
 describe("HTTP requests", () => {
   it("can perform a batch HTTP request", async () => {
-    let cap = newHttpBatchRpcSession<TestTarget>(`http://${inject("testServerHost")}`);
+    let cap = newHttpBatchRpcSession<TestTarget>(`http://${inject("testServerHost-json")}`);
 
     let promise1 = cap.square(6);
 
@@ -1337,7 +1337,7 @@ describe("HTTP requests", () => {
 
 describe.each(Codecs)("WebSockets [%s]", (codec) => {
   it("can open a WebSocket connection", async () => {
-    let url = `ws://${inject("testServerHost")}`;
+    let url = `ws://${inject(`testServerHost-${codec.name}`)}`;
 
     let cap = newWebSocketRpcSession<TestTarget>(url, undefined, { codec });
 

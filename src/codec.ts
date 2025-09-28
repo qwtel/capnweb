@@ -28,7 +28,7 @@ export interface Codec {
   // Indicates which value-level codec semantics apply for devaluation/evaluation.
   // - "json": values use tagged arrays and base64 bytes
   // - "v8":   values are structured-clone-friendly and typed
-  name: "json" | "v8" | "msgpack";
+  name: "json" | "v8";
 
   // Classify a value for RPC serialization semantics under this codec.
   // This governs what the devaluator treats as pass-through vs needs tagging.
