@@ -62,4 +62,13 @@ export class TestTarget extends RpcTarget {
   returnNull() { return null; }
   returnUndefined() { return undefined; }
   returnNumber(i: number) { return i; }
+
+  fill255(x: BufferSource): Uint8Array {
+    const u8 = x instanceof Uint8Array 
+      ? x 
+      : x instanceof ArrayBuffer 
+        ? new Uint8Array(x) 
+        : new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+    return u8.fill(255);
+  }
 }

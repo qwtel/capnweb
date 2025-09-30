@@ -4,7 +4,7 @@
 
 import { StubHook, RpcPayload, RpcStub, PropertyPath, PayloadStubHook, ErrorStubHook, RpcTarget, unwrapStubAndPath } from "./core.js";
 import { Devaluator, Evaluator, ExportId, ImportId, Exporter, Importer } from "./serialize.js";
-import { Codec, JsonCodec, WireMessage } from "./codec.js";
+import { Codec, JSON_CODEC, WireMessage } from "./codec.js";
 
 /**
  * Interface for an RPC transport, which is a simple bidirectional message stream. Implement this
@@ -14,7 +14,7 @@ export interface RpcTransport {
   /**
    * Sends a message to the other end.
    */
-  send(message: string | Uint8Array | ArrayBuffer): Promise<void>;
+  send(message: WireMessage): Promise<void>;
 
   /**
    * Receives a message sent by the other end.
@@ -24,7 +24,7 @@ export interface RpcTransport {
    * If there are no outstanding calls (and none are made in the future), then the error does not
    * propagate anywhere -- this is considered a "clean" shutdown.
    */
-  receive(): Promise<string | Uint8Array | ArrayBuffer>;
+  receive(): Promise<WireMessage>;
 
   /**
    * Indicates that the RPC system has suffered an error that prevents the session from continuing.
@@ -518,7 +518,7 @@ class RpcSessionImpl implements Importer, Exporter {
   get codec(): Codec {
     const c = this.options.codec;
     if (c) return c;
-    return new JsonCodec();
+    return JSON_CODEC;
   }
 
   private send(msg: any) {

@@ -6,6 +6,7 @@ declare module 'vitest' {
   export interface ProvidedContext {
     "testServerHost-json": string
     "testServerHost-v8": string
+    "testServerHost-object": never
   }
 }
 

@@ -49,7 +49,7 @@ class WebSocketTransport implements RpcTransport {
       webSocket.addEventListener("open", event => {
         try {
           for (let message of this.#sendQueue!) {
-            webSocket.send(message);
+            webSocket.send(message as string | BufferSource);
           }
         } catch (err) {
           this.#receivedError(err);
@@ -61,7 +61,7 @@ class WebSocketTransport implements RpcTransport {
     webSocket.addEventListener("message", (event: MessageEvent<any>) => {
       if (this.#error) {
         // Ignore further messages.
-      } else if (typeof event.data === "string" || event.data instanceof ArrayBuffer || event.data instanceof Uint8Array) {
+      } else if (typeof event.data === "string" || ArrayBuffer.isView(event.data) || event.data instanceof ArrayBuffer) {
         const msg: WireMessage = event.data;
         if (this.#receiveResolver) {
           this.#receiveResolver(msg);
@@ -93,7 +93,7 @@ class WebSocketTransport implements RpcTransport {
 
   async send(message: WireMessage): Promise<void> {
     if (this.#sendQueue === undefined) {
-      this.#webSocket.send(message);
+      this.#webSocket.send(message as string | BufferSource);
     } else {
       // Not open yet, queue for later.
       this.#sendQueue.push(message);

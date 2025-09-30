@@ -47,8 +47,8 @@ const ERROR_TYPES: Record<string, any> = {
 
 // Polyfill type for UInt8Array.toBase64(), which has started landing in JS runtimes but is not
 // supported everywhere just yet.
-interface Uint8Array {
-  toBase64?(options?: {
+interface ToBase64 {
+  toBase64(options?: {
     alphabet?: "base64" | "base64url",
     omitPadding?: boolean
   }): string;
@@ -59,6 +59,22 @@ interface FromBase64 {
     alphabet?: "base64" | "base64url",
     lastChunkHandling?: "loose" | "strict" | "stop-before-partial"
   }): Uint8Array;
+}
+
+function typedArrayType(x: unknown): string {
+  if (x instanceof Uint8Array) return 'uint8';
+  if (x instanceof Uint8ClampedArray) return 'uint8clamped';
+  if (x instanceof Uint16Array) return 'uint16';
+  if (x instanceof Uint32Array) return 'uint32';
+  if (x instanceof Int8Array) return 'int8';
+  if (x instanceof Int16Array) return 'int16';
+  if (x instanceof Int32Array) return 'int32';
+  if (x instanceof Float16Array) return 'float16';
+  if (x instanceof Float32Array) return 'float32';
+  if (x instanceof Float64Array) return 'float64';
+  if (x instanceof BigInt64Array) return 'bigint64';
+  if (x instanceof BigUint64Array) return 'biguint64';
+  throw new Error('unknown typed array type');
 }
 
 // Converts fully-hydrated messages into object trees that are JSON-serializable for sending over
@@ -81,7 +97,6 @@ export class Devaluator {
       value: unknown, parent?: object, exporter: Exporter = NULL_EXPORTER, source?: RpcPayload,
       codec: Codec = JSON_CODEC)
       : unknown {
-    // Lazy acquire codec implementation to classify types consistently.
     let devaluator = new Devaluator(exporter, source, codec);
     try {
       return devaluator.devaluateImpl(value, parent, 0);
@@ -149,12 +164,18 @@ export class Devaluator {
         return ["date", (<Date>value).getTime()];
 
       case "bytes": {
-        let bytes = value as Uint8Array;
-        if (bytes.toBase64) {
-          return ["bytes", bytes.toBase64({omitPadding: true})];
+        let bytes = value instanceof Uint8Array 
+          ? value
+          : ArrayBuffer.isView(value) 
+            ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength) 
+            : (() => { throw new Error("Unreachable") })();
+        if ('toBase64' in bytes) {
+          return ["bytes", (bytes as ToBase64).toBase64({omitPadding: true}), 
+              typedArrayType(bytes)];
         } else {
           return ["bytes",
-              btoa(String.fromCharCode.apply(null, bytes as number[]).replace(/=*$/, ""))];
+              btoa(String.fromCharCode.apply(null, bytes as any).replace(/=*$/, "")), 
+              typedArrayType(bytes)];
         }
       }
 
@@ -172,6 +193,9 @@ export class Devaluator {
           e = rewritten;
         }
         if (kind === "error-raw") {
+          if (!rewritten || !rewritten.stack) {
+            Reflect.deleteProperty(e, "stack");
+          }
           return e;
         }
 
@@ -257,6 +281,20 @@ export function serialize(value: unknown, codec: Codec = JSON_CODEC): WireMessag
   return codec.encode(Devaluator.devaluate(value, codec));
 }
 
+const TYPED_ARRAY_TYPES = {
+  'uint8clamped': Uint8ClampedArray,
+  'uint16': Uint16Array,
+  'uint32': Uint32Array,
+  'int8': Int8Array,
+  'int16': Int16Array,
+  'int32': Int32Array,
+  'float16': Float16Array,
+  'float32': Float32Array,
+  'float64': Float64Array,
+  'bigint64': BigInt64Array,
+  'biguint64': BigUint64Array,
+} as const;
+
 // =======================================================================================
 
 export interface Importer {
@@ -327,17 +365,23 @@ export class Evaluator {
         case "bytes": {
           let b64 = Uint8Array as FromBase64;
           if (typeof value[1] == "string") {
+            let bytes;
             if (b64.fromBase64) {
-              return b64.fromBase64(value[1]);
+              bytes = b64.fromBase64(value[1]);
             } else {
               let bs = atob(value[1]);
               let len = bs.length;
-              let bytes = new Uint8Array(len);
+              bytes = new Uint8Array(len);
               for (let i = 0; i < len; i++) {
                 bytes[i] = bs.charCodeAt(i);
               }
-              return bytes;
             }
+            if (value[2] in TYPED_ARRAY_TYPES) {
+              let Ctor = TYPED_ARRAY_TYPES[value[2] as keyof typeof TYPED_ARRAY_TYPES];
+              let len = Math.ceil(bytes.byteLength / Ctor.BYTES_PER_ELEMENT);
+              return new (<any>Ctor)(bytes.buffer, bytes.byteOffset, len);
+            }
+            return bytes;
           }
           break;
         }

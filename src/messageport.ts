@@ -2,8 +2,12 @@
 // Licensed under the MIT license found in the LICENSE.txt file or at:
 //     https://opensource.org/license/mit
 
+import { WireMessage } from "./codec.js";
 import { RpcStub } from "./core.js";
 import { RpcTransport, RpcSession, RpcSessionOptions } from "./rpc.js";
+
+const MESSAGE = '@@cloudflare/capnweb/message';
+const CLOSE = '@@cloudflare/capnweb/close';
 
 // Generic postMessage-style endpoint.
 // Security concerns (e.g., targetOrigin) are intentionally not modeled here.
@@ -43,14 +47,11 @@ class MessagePortTransport implements RpcTransport {
     endpoint.addEventListener("message", (event: any) => {
       if (this.#error) {
         // Ignore further messages.
-      } else if (event?.data === null) {
+      } else if (event?.data?.type === CLOSE) {
         // Peer is signaling that they're closing the connection
         this.#receivedError(new Error("Peer closed MessagePort connection."));
-      } else if (
-          typeof event?.data === "string" ||
-          event?.data instanceof ArrayBuffer ||
-          event?.data instanceof Uint8Array) {
-        const msg: string | Uint8Array | ArrayBuffer = event.data;
+      } else if (event?.data?.type === MESSAGE) {
+        const msg: WireMessage = event.data.value;
         if (this.#receiveResolver) {
           this.#receiveResolver(msg);
           this.#receiveResolver = undefined;
@@ -69,25 +70,25 @@ class MessagePortTransport implements RpcTransport {
   }
 
   #endpoint: Endpoint;
-  #receiveResolver?: (message: string | Uint8Array | ArrayBuffer) => void;
+  #receiveResolver?: (message: WireMessage) => void;
   #receiveRejecter?: (err: any) => void;
-  #receiveQueue: (string | Uint8Array | ArrayBuffer)[] = [];
+  #receiveQueue: (WireMessage)[] = [];
   #error?: any;
 
-  async send(message: string | Uint8Array | ArrayBuffer): Promise<void> {
+  async send(message: WireMessage): Promise<void> {
     if (this.#error) {
       throw this.#error;
     }
-    this.#endpoint.postMessage(message);
+    this.#endpoint.postMessage({ type: MESSAGE, value: message });
   }
 
-  async receive(): Promise<string | Uint8Array | ArrayBuffer> {
+  async receive(): Promise<WireMessage> {
     if (this.#receiveQueue.length > 0) {
       return this.#receiveQueue.shift()!;
     } else if (this.#error) {
       throw this.#error;
     } else {
-      return new Promise<string | Uint8Array | ArrayBuffer>((resolve, reject) => {
+      return new Promise<WireMessage>((resolve, reject) => {
         this.#receiveResolver = resolve;
         this.#receiveRejecter = reject;
       });
@@ -97,7 +98,7 @@ class MessagePortTransport implements RpcTransport {
   abort?(reason: any): void {
     // Send close signal to peer before closing
     try {
-      this.#endpoint.postMessage(null);
+      this.#endpoint.postMessage({ type: CLOSE });
     } catch (err) {
       // Ignore errors when sending close signal - port might already be closed
     }

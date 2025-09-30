@@ -4,7 +4,7 @@
 
 import { RpcStub, RpcPromise } from "./core.js";
 
-export type WireMessage = string | Uint8Array | ArrayBuffer;
+export type WireMessage = string | Uint8Array | ArrayBuffer | object;
 
 export let workersModuleName = navigator.userAgent === "Cloudflare-Workers" ? "cloudflare:workers" : null;
 let workersModule: any;
@@ -28,7 +28,7 @@ export interface Codec {
   // Indicates which value-level codec semantics apply for devaluation/evaluation.
   // - "json": values use tagged arrays and base64 bytes
   // - "v8":   values are structured-clone-friendly and typed
-  name: "json" | "v8";
+  readonly name: "json" | "v8" | "object";
 
   // Classify a value for RPC serialization semantics under this codec.
   // This governs what the devaluator treats as pass-through vs needs tagging.
@@ -36,7 +36,7 @@ export interface Codec {
 }
 
 export class JsonCodec implements Codec {
-  name: "json" = "json";
+  readonly name: "json" = "json";
 
   encode(message: any): WireMessage {
     return JSON.stringify(message);
@@ -93,9 +93,6 @@ export class JsonCodec implements Codec {
       case Date.prototype:
         return "date";
 
-      case Uint8Array.prototype:
-        return "bytes";
-
       // TODO: All other structured clone types.
 
       case RpcStub.prototype:
@@ -119,6 +116,10 @@ export class JsonCodec implements Codec {
             // which will await the thenable.
             return "rpc-thenable";
           }
+        }
+
+        if (ArrayBuffer.isView(value)) {
+          return "bytes"
         }
 
         if (value instanceof RpcTarget) {

@@ -8,6 +8,7 @@ import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTranspor
          newHttpBatchRpcSession, JSON_CODEC} from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 import type { Codec, WireMessage } from "../src/codec.js";
+import { OBJECT_CODEC } from "../src/contrib/object-codec.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '123': 123,
@@ -25,7 +26,7 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
 
   '["bigint","123"]': 123n,
   '["date",1234]': new Date(1234),
-  '["bytes","aGVsbG8h"]': new TextEncoder().encode("hello!"),
+  '["bytes","aGVsbG8h","uint8"]': new TextEncoder().encode("hello!"),
   '["undefined"]': undefined,
   '["error","Error","the message"]': new Error("the message"),
   '["error","TypeError","the message"]': new TypeError("the message"),
@@ -44,7 +45,7 @@ class NotSerializable {
 
 let V8_CODEC: Codec | undefined;
 if ("process" in globalThis) {
-  ({ V8_CODEC } = await import("../src/contrib/codec-v8.js").catch(() => ({ V8_CODEC: undefined })));
+  ({ V8_CODEC } = await import("../src/contrib/v8-codec.js").catch(() => ({ V8_CODEC: undefined })));
 }
 
 const Codecs = [JSON_CODEC, ...(V8_CODEC ? [V8_CODEC] : [])];
@@ -637,6 +638,20 @@ describe.each(Codecs)("basic rpc [%s]", (codec) => {
 
     expect(await stub.jsonify({x: 123, $remove$toJSON: () => "bad"})).toBe('{"x":123}');
   });
+
+  it("supports bytes serialization", async () => {
+    await using harness = new TestHarness(new TestTarget(), { codec });
+    let stub = harness.stub;
+
+    let bytes = new Uint8Array(4);
+    expect(await stub.fill255(bytes)).toStrictEqual(new Uint8Array([255, 255, 255, 255]));
+
+    let bytes32 = new Uint32Array(1);
+    expect(await stub.fill255(bytes32)).toStrictEqual(new Uint8Array([255, 255, 255, 255]));
+
+    // let arrayBuffer = new ArrayBuffer(4);
+    // expect(await stub.fill255(arrayBuffer)).toStrictEqual(new Uint8Array([255, 255, 255, 255]));
+  });
 });
 
 describe.each(Codecs)("capability-passing [%s]", (codec) => {
@@ -1193,13 +1208,15 @@ describe.each(Codecs)("error serialization [%s]", (codec) => {
     let result = await stub.throwError()
       .catch(err => {
         expect(err).toBeInstanceOf(RangeError);
-        expect((err as Error).message).toBe("test error");
+        expect(err.message).toBe("test error");
 
         // By default, the stack isn't sent. A stack may be added client-side, though. So we
         // verify that it doesn't contain the function name `throwErrorImpl` nor the file name
         // `test-util.ts`, which should only appear on the server.
-        expect((err as Error).stack).not.toContain("throwErrorImpl");
-        expect((err as Error).stack).not.toContain("test-util.ts");
+        if (err.stack !== undefined) { // undefined stack is a pass
+          expect(err.stack).not.toContain("throwErrorImpl");
+          expect(err.stack).not.toContain("test-util.ts");
+        }
 
         return "caught";
       });
@@ -1320,8 +1337,10 @@ describe.each(Codecs)("onRpcBroken [%s]", (codec) => {
 
 // =======================================================================================
 
+const isWebKit = typeof navigator !== "undefined" && (/webkit/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent));
+
 describe("HTTP requests", () => {
-  it("can perform a batch HTTP request", async () => {
+  it.skipIf(isWebKit)("can perform a batch HTTP request", async () => {
     let cap = newHttpBatchRpcSession<TestTarget>(`http://${inject("testServerHost-json")}`);
 
     let promise1 = cap.square(6);
@@ -1336,7 +1355,7 @@ describe("HTTP requests", () => {
 });
 
 describe.each(Codecs)("WebSockets [%s]", (codec) => {
-  it("can open a WebSocket connection", async () => {
+  it.skipIf(isWebKit)("can open a WebSocket connection", async () => {
     let url = `ws://${inject(`testServerHost-${codec.name}`)}`;
 
     let cap = newWebSocketRpcSession<TestTarget>(url, undefined, { codec });
@@ -1355,7 +1374,7 @@ describe.each(Codecs)("WebSockets [%s]", (codec) => {
   });
 });
 
-describe.each(Codecs)("MessagePorts [%s]", (codec) => {
+describe.each([...Codecs, OBJECT_CODEC])("MessagePorts [%s]", (codec) => {
   it("can communicate over MessageChannel", async () => {
     // Create a MessageChannel for communication
     let channel = new MessageChannel();

@@ -16,9 +16,9 @@ import { WebSocketServer, AddressInfo } from 'ws'
 import type { TestProject } from 'vitest/node'
 import * as url from 'url'
 import { Codec, JSON_CODEC, newWebSocketRpcSession, nodeHttpBatchRpcResponse } from '../src/index.js';
+import { V8_CODEC } from '../src/contrib/v8-codec.js';
 import { TestTarget } from './test-util.js';
 import http from "node:http";
-import { V8_CODEC } from '../src/contrib/codec-v8.js';
 
 type Server = {
   httpServer?: http.Server;

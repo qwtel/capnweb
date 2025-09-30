@@ -99,7 +99,7 @@ export default defineConfig({
               // becomes widely available.
               { browser: 'chromium' },
               { browser: 'firefox' },
-              // { browser: 'webkit' },
+              { browser: 'webkit' },
             ],
             headless: true,
             screenshotFailures: false,  // there's nothing to screenshot
