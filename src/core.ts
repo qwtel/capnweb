@@ -3,8 +3,8 @@
 //     https://opensource.org/license/mit
 
 import type { __RPC_TARGET_BRAND } from "./types.js";
-import { RpcTarget, Codec, JsonCodec } from "./codec.js";
-export { RpcTarget, type Codec, JsonCodec };
+import { RpcTarget, Codec, JsonCodec, JSON_CODEC } from "./codec.js";
+export { RpcTarget, type Codec, JsonCodec, JSON_CODEC };
 
 // Polyfill Symbol.dispose for browsers that don't support it yet
 if (!Symbol.dispose) {
@@ -21,7 +21,6 @@ export interface RpcTarget {
 export type PropertyPath = (string | number)[];
 
 
-export const JSON_CODEC = new JsonCodec();
 export const typeForRpc = JSON_CODEC.typeForRpc;
 
 function mapNotLoaded(): never {
