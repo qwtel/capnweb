@@ -77,6 +77,20 @@ function typedArrayType(x: unknown): string {
   throw new Error('unknown typed array type');
 }
 
+const TYPED_ARRAY_TYPES = {
+  'uint8clamped': Uint8ClampedArray,
+  'uint16': Uint16Array,
+  'uint32': Uint32Array,
+  'int8': Int8Array,
+  'int16': Int16Array,
+  'int32': Int32Array,
+  'float16': Float16Array,
+  'float32': Float32Array,
+  'float64': Float64Array,
+  'bigint64': BigInt64Array,
+  'biguint64': BigUint64Array,
+} as const;
+
 // Converts fully-hydrated messages into object trees that are JSON-serializable for sending over
 // the wire. This is used to implement serialization -- but it doesn't take the last step of
 // actually converting to a string. (The name is meant to be the opposite of "Evaluator", which
@@ -164,18 +178,18 @@ export class Devaluator {
         return ["date", (<Date>value).getTime()];
 
       case "bytes": {
-        let bytes = value instanceof Uint8Array 
+        let bytes = value instanceof Uint8Array
           ? value
-          : ArrayBuffer.isView(value) 
-            ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength) 
+          : ArrayBuffer.isView(value)
+            ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
             : (() => { throw new Error("Unreachable") })();
         if ('toBase64' in bytes) {
-          return ["bytes", (bytes as ToBase64).toBase64({omitPadding: true}), 
-              typedArrayType(bytes)];
+          return ["bytes", (<ToBase64>bytes).toBase64({omitPadding: true}),
+              typedArrayType(value)];
         } else {
           return ["bytes",
-              btoa(String.fromCharCode.apply(null, bytes as any).replace(/=*$/, "")), 
-              typedArrayType(bytes)];
+              btoa(String.fromCharCode.apply(null, bytes as any).replace(/=*$/, "")),
+              typedArrayType(value)];
         }
       }
 
@@ -280,20 +294,6 @@ export class Devaluator {
 export function serialize(value: unknown, codec: Codec = JSON_CODEC): WireMessage {
   return codec.encode(Devaluator.devaluate(value, codec));
 }
-
-const TYPED_ARRAY_TYPES = {
-  'uint8clamped': Uint8ClampedArray,
-  'uint16': Uint16Array,
-  'uint32': Uint32Array,
-  'int8': Int8Array,
-  'int16': Int16Array,
-  'int32': Int32Array,
-  'float16': Float16Array,
-  'float32': Float32Array,
-  'float64': Float64Array,
-  'bigint64': BigInt64Array,
-  'biguint64': BigUint64Array,
-} as const;
 
 // =======================================================================================
 

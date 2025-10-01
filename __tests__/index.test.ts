@@ -27,6 +27,7 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '["bigint","123"]': 123n,
   '["date",1234]': new Date(1234),
   '["bytes","aGVsbG8h","uint8"]': new TextEncoder().encode("hello!"),
+  '["bytes","aGVsbG8h","uint16"]': new Uint16Array(new TextEncoder().encode("hello!").buffer),
   '["undefined"]': undefined,
   '["error","Error","the message"]': new Error("the message"),
   '["error","TypeError","the message"]': new TypeError("the message"),
@@ -104,6 +105,10 @@ describe("simple serialization", () => {
     expect(() => deserialize('["unknown_type", "param"]')).toThrowError();
     expect(() => deserialize('["date"]')).toThrowError(); // missing timestamp
     expect(() => deserialize('["error"]')).toThrowError(); // missing type and message
+  })
+
+  it("allows omitting bytes type", () => {
+    expect(deserialize('["bytes","aGVsbG8h"]')).toStrictEqual(new TextEncoder().encode("hello!"));
   })
 });
 
@@ -640,17 +645,17 @@ describe.each(Codecs)("basic rpc [%s]", (codec) => {
   });
 
   it("supports bytes serialization", async () => {
-    await using harness = new TestHarness(new TestTarget(), { codec });
+    await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
 
     let bytes = new Uint8Array(4);
     expect(await stub.fill255(bytes)).toStrictEqual(new Uint8Array([255, 255, 255, 255]));
 
-    let bytes32 = new Uint32Array(1);
-    expect(await stub.fill255(bytes32)).toStrictEqual(new Uint8Array([255, 255, 255, 255]));
+    let bytes16 = new Uint16Array(2);
+    expect(await stub.fill255(bytes16)).toStrictEqual(new Uint16Array([65535, 65535]));
 
-    // let arrayBuffer = new ArrayBuffer(4);
-    // expect(await stub.fill255(arrayBuffer)).toStrictEqual(new Uint8Array([255, 255, 255, 255]));
+    let bytes32 = new Uint32Array(1);
+    expect(await stub.fill255(bytes32)).toStrictEqual(new Uint32Array([0xffffffff]));
   });
 });
 
