@@ -632,6 +632,20 @@ describe("basic rpc", () => {
 
     expect(await stub.jsonify({x: 123, $remove$toJSON: () => "bad"})).toBe('{"x":123}');
   });
+
+  it("supports bytes serialization", async () => {
+    await using harness = new TestHarness(new TestTarget());
+    let stub = harness.stub;
+
+    let bytes = new Uint8Array(4);
+    expect(await stub.fill255(bytes)).toStrictEqual(new Uint8Array([255, 255, 255, 255]));
+
+    let bytes16 = new Uint16Array(2);
+    expect(await stub.fill255(bytes16)).toStrictEqual(new Uint16Array([65535, 65535]));
+
+    let bytes32 = new Uint32Array(1);
+    expect(await stub.fill255(bytes32)).toStrictEqual(new Uint32Array([0xffffffff]));
+  });
 });
 
 describe("capability-passing", () => {

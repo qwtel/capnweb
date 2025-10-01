@@ -62,4 +62,9 @@ export class TestTarget extends RpcTarget {
   returnNull() { return null; }
   returnUndefined() { return undefined; }
   returnNumber(i: number) { return i; }
+
+  fill255<T extends TypedArray>(x: T): T {
+    new Uint8Array(x.buffer, x.byteOffset, x.byteLength).fill(255);
+    return x;
+  }
 }
