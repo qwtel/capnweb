@@ -24,7 +24,8 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
 
   '["bigint","123"]': 123n,
   '["date",1234]': new Date(1234),
-  '["bytes","aGVsbG8h"]': new TextEncoder().encode("hello!"),
+  '["bytes","aGVsbG8h","uint8"]': new TextEncoder().encode("hello!"),
+  '["bytes","aGVsbG8h","uint16"]': new Uint16Array(new TextEncoder().encode("hello!").buffer),
   '["undefined"]': undefined,
   '["error","Error","the message"]': new Error("the message"),
   '["error","TypeError","the message"]': new TypeError("the message"),
@@ -95,6 +96,10 @@ describe("simple serialization", () => {
     expect(() => deserialize('["unknown_type", "param"]')).toThrowError();
     expect(() => deserialize('["date"]')).toThrowError(); // missing timestamp
     expect(() => deserialize('["error"]')).toThrowError(); // missing type and message
+  })
+
+  it("allows omitting bytes type", () => {
+    expect(deserialize('["bytes","aGVsbG8h"]')).toStrictEqual(new TextEncoder().encode("hello!"));
   })
 });
 

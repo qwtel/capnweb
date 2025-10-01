@@ -102,6 +102,10 @@ export function typeForRpc(value: unknown): TypeForRpc {
         }
       }
 
+      if (ArrayBuffer.isView(value)) {
+        return "bytes";
+      }
+
       if (value instanceof RpcTarget) {
         return "rpc-target";
       }

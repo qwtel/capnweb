@@ -204,7 +204,7 @@ The following types can be passed over RPC (in arguments or return values), and 
 
 The following types are not supported as of this writing, but may be added in the future:
 * `Map` and `Set`
-* `ArrayBuffer` and typed arrays other than `Uint8Array`
+* `ArrayBuffer`
 * `RegExp`
 * `ReadableStream` and `WritableStream`, with automatic flow control.
 * `Headers`, `Request`, and `Response`
