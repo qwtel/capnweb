@@ -149,7 +149,7 @@ If the type is "import", the expression evaluates to a stub. If it is "pipeline"
 
 `propertyPath` is optional. If specified, it is an array of property names (strings or numbers) leading to a specific property of the import's target. The expression evaluates to that property (unless `callArguments` is also specified).
 
-`callArguments` is also optional. If specified, then the given property should be called as a function. `callArguments` is an expression that evaluates to an array; these are the arguments to the call.
+`callArguments` is also optional. If specified, then the given property should be called as a function. `callArguments` is an array of expressions; these expressions are evaluated to produce the arguments to the call.
 
 `["remap", importId, propertyPath, captures, instructions]`
 
