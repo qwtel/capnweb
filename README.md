@@ -382,7 +382,7 @@ Note that if you pass the same `RpcTarget` instance to RPC multiple times -- thu
 
 ### Listening for disconnect
 
-You can monitor any stub for "brokennness" with its `onRpcBroken()` method:
+You can monitor any stub for "brokenness" with its `onRpcBroken()` method:
 
 ```ts
 stub.onRpcBroken((error: any) => {
