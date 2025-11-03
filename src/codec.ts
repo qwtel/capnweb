@@ -3,14 +3,11 @@
 //     https://opensource.org/license/mit
 
 import { RpcStub, RpcPromise } from "./core.js";
+import { WORKERS_MODULE_SYMBOL } from "./symbols.js"
 
 export type WireMessage = string | Uint8Array | ArrayBuffer | object;
 
-export let workersModuleName = navigator.userAgent === "Cloudflare-Workers" ? "cloudflare:workers" : null;
-let workersModule: any;
-if (workersModuleName) {
-  workersModule = await import(/* @vite-ignore */workersModuleName);
-}
+export let workersModule: any = (globalThis as any)[WORKERS_MODULE_SYMBOL];
 
 export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
 
