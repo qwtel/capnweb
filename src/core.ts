@@ -3,8 +3,10 @@
 //     https://opensource.org/license/mit
 
 import type { __RPC_TARGET_BRAND } from "./types.js";
-import { RpcTarget, Codec, JsonCodec, JSON_CODEC } from "./codec.js";
-export { RpcTarget, type Codec, JsonCodec, JSON_CODEC };
+import { WORKERS_MODULE_SYMBOL } from "./symbols.js"
+
+import { Codec, JsonCodec, JSON_CODEC } from "./codec.js";
+export { type Codec, JsonCodec, JSON_CODEC };
 
 // Polyfill Symbol.dispose for browsers that don't support it yet
 if (!Symbol.dispose) {
@@ -14,12 +16,19 @@ if (!Symbol.asyncDispose) {
   (Symbol as any).asyncDispose = Symbol.for('asyncDispose');
 }
 
+export let workersModule: any = (globalThis as any)[WORKERS_MODULE_SYMBOL];
+
 export interface RpcTarget {
   [__RPC_TARGET_BRAND]: never;
 };
 
+export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
+
 export type PropertyPath = (string | number)[];
 
+export type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
+    "bigint" | "bytes" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" |
+    "error-raw" | "undefined" | "raw";
 
 export const typeForRpc = JSON_CODEC.typeForRpc;
 

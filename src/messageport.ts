@@ -5,9 +5,10 @@
 import { WireMessage } from "./codec.js";
 import { RpcStub } from "./core.js";
 import { RpcTransport, RpcSession, RpcSessionOptions } from "./rpc.js";
+import { POSTMESSAGE_CODEC } from "./postmessage-codec.js";
 
-const MESSAGE = '@@cloudflare/capnweb/message';
-const CLOSE = '@@cloudflare/capnweb/close';
+const MESSAGE = '@cloudflare/capnweb/message';
+const CLOSE = '@cloudflare/capnweb/close';
 
 // Generic postMessage-style endpoint.
 // Security concerns (e.g., targetOrigin) are intentionally not modeled here.
@@ -25,7 +26,7 @@ export interface Endpoint {
 export function newMessagePortRpcSession(
     port: MessagePort, localMain?: any, options?: RpcSessionOptions): RpcStub {
   let transport = new MessagePortTransport(port);
-  let rpc = new RpcSession(transport, localMain, options);
+  let rpc = new RpcSession(transport, localMain, { ...options, codec: options?.codec || POSTMESSAGE_CODEC });
   return rpc.getRemoteMain();
 }
 
@@ -33,18 +34,18 @@ export function newMessagePortRpcSession(
 export function newEndpointRpcSession(
     endpoint: Endpoint, localMain?: any, options?: RpcSessionOptions): RpcStub {
   let transport = new MessagePortTransport(endpoint);
-  let rpc = new RpcSession(transport, localMain, options);
+  let rpc = new RpcSession(transport, localMain, { ...options, codec: options?.codec || POSTMESSAGE_CODEC });
   return rpc.getRemoteMain();
 }
 
 class MessagePortTransport implements RpcTransport {
-  constructor (endpoint: Endpoint) {
-    this.#endpoint = endpoint;
+  constructor (port: Endpoint) {
+    this.#port = port;
 
     // Start listening for messages if supported (e.g., MessagePort).
-    endpoint.start?.();
+    port.start?.();
 
-    endpoint.addEventListener("message", (event: any) => {
+    port.addEventListener("message", (event: any) => {
       if (this.#error) {
         // Ignore further messages.
       } else if (event?.data?.type === CLOSE) {
@@ -64,12 +65,12 @@ class MessagePortTransport implements RpcTransport {
       }
     });
 
-    endpoint.addEventListener("messageerror", (_event: any) => {
+    port.addEventListener("messageerror", (_event: any) => {
       this.#receivedError(new Error("MessagePort message error."));
     });
   }
 
-  #endpoint: Endpoint;
+  #port: Endpoint;
   #receiveResolver?: (message: WireMessage) => void;
   #receiveRejecter?: (err: any) => void;
   #receiveQueue: (WireMessage)[] = [];
@@ -79,7 +80,7 @@ class MessagePortTransport implements RpcTransport {
     if (this.#error) {
       throw this.#error;
     }
-    this.#endpoint.postMessage({ type: MESSAGE, value: message });
+    this.#port.postMessage({ type: MESSAGE, value: message });
   }
 
   async receive(): Promise<WireMessage> {
@@ -98,14 +99,14 @@ class MessagePortTransport implements RpcTransport {
   abort?(reason: any): void {
     // Send close signal to peer before closing
     try {
-      this.#endpoint.postMessage({ type: CLOSE });
+      this.#port.postMessage({ type: CLOSE });
     } catch (err) {
       // Ignore errors when sending close signal - port might already be closed
     }
 
     // Close if supported (e.g., MessagePort).
     try {
-      this.#endpoint.close?.();
+      this.#port.close?.();
     } catch (_err) {}
 
     if (!this.#error) {

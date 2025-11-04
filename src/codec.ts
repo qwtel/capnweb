@@ -2,18 +2,9 @@
 // Licensed under the MIT license found in the LICENSE.txt file or at:
 //     https://opensource.org/license/mit
 
-import { RpcStub, RpcPromise } from "./core.js";
-import { WORKERS_MODULE_SYMBOL } from "./symbols.js"
+import { RpcStub, RpcPromise, RpcTarget, type TypeForRpc, workersModule } from "./core.js";
 
 export type WireMessage = string | Uint8Array | ArrayBuffer | object;
-
-export let workersModule: any = (globalThis as any)[WORKERS_MODULE_SYMBOL];
-
-export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
-
-export type TypeForRpc = "unsupported" | "primitive"  | "object" | "function" | "array" | "date" |
-    "bigint" | "bytes" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" |
-    "error-raw" | "undefined" | "raw";
 
 export interface Codec {
   // Encode a JSON-serializable message tree (RPC expression) to a wire payload.
@@ -23,9 +14,7 @@ export interface Codec {
   decode(wire: WireMessage): any;
 
   // Indicates which value-level codec semantics apply for devaluation/evaluation.
-  // - "json": values use tagged arrays and base64 bytes
-  // - "v8":   values are structured-clone-friendly and typed
-  readonly name: "json" | "v8" | "object";
+  readonly name: "json" | "postmessage" | "object" | "v8";
 
   // Classify a value for RPC serialization semantics under this codec.
   // This governs what the devaluator treats as pass-through vs needs tagging.

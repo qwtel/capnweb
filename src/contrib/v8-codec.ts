@@ -4,8 +4,9 @@
 
 import * as v8 from "node:v8";
 
-import { Codec, TypeForRpc, WireMessage } from "../codec.js";
-import { OBJECT_CODEC } from "./object-codec.js";
+import { Codec, WireMessage } from "../codec.js";
+import { POSTMESSAGE_CODEC } from "../postmessage-codec.js";
+import { type TypeForRpc } from "../core.js";
 
 export class V8Codec implements Codec {
   readonly name: "v8" = "v8";
@@ -26,7 +27,7 @@ export class V8Codec implements Codec {
   }
 
   typeForRpc(value: unknown): TypeForRpc {
-    return OBJECT_CODEC.typeForRpc(value);
+    return POSTMESSAGE_CODEC.typeForRpc(value);
   }
 }
 

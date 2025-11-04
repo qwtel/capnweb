@@ -11,10 +11,13 @@ import { newWebSocketRpcSession as newWebSocketRpcSessionImpl,
 import { newHttpBatchRpcSession as newHttpBatchRpcSessionImpl,
          newHttpBatchRpcResponse, nodeHttpBatchRpcResponse } from "./batch.js";
 import { newMessagePortRpcSession as newMessagePortRpcSessionImpl } from "./messageport.js";
+import { newChromeExtensionRpcSession as newChromeExtensionRpcSessionImpl,
+         newChromeExtensionRpcBackgroundService as newChromeExtensionRpcBackgroundServiceImpl } from "./chrome-extension.js";
 import { forceInitMap } from "./map.js";
 
-export { JsonCodec, JSON_CODEC } from "./codec.js";
-export type { Codec } from "./codec.js";
+export { JSON_CODEC, type Codec } from "./codec.js";
+export { OBJECT_CODEC } from "./object-codec.js";
+export { POSTMESSAGE_CODEC } from "./postmessage-codec.js";
 
 forceInitMap();
 
@@ -132,6 +135,31 @@ export let newHttpBatchRpcSession:<T extends Serializable<T>>
 export let newMessagePortRpcSession:<T extends Serializable<T> = Empty>
     (port: MessagePort, localMain?: any, options?: RpcSessionOptions) => RpcStub<T> =
     <any>newMessagePortRpcSessionImpl;
+
+/**
+ * Initiate an RPC session over Chrome extension messaging APIs.
+ *
+ * This function internally calls `chrome.runtime.connect()` to establish a connection and extract
+ * connection metadata (like tab ID). The port is used only for the initial handshake and then
+ * discarded. All RPC communication uses fire-and-forget messaging.
+ *
+ * @param localMain The main RPC interface to expose to the peer. Returns a stub for the main
+ *     interface exposed from the peer.
+ */
+export let newChromeExtensionRpcSession:<T extends Serializable<T> = Empty>
+    (localMain?: any, options?: RpcSessionOptions) => RpcStub<T> =
+    <any>newChromeExtensionRpcSessionImpl;
+
+
+/**
+ * Set up Chrome extension RPC session for background scripts.
+ *
+ * @param localMain The main RPC interface to expose to the peer.
+ * @param options Optional RPC session options.
+ */
+export let newChromeExtensionRpcBackgroundService:<T extends Serializable<T> = Empty>
+    (localMain?: (sender?: chrome.runtime.MessageSender) => any, options?: RpcSessionOptions) => Map<string, RpcStub<T>> =
+    <any>newChromeExtensionRpcBackgroundServiceImpl;
 
 /**
  * Implements unified handling of HTTP-batch and WebSocket responses for the Cloudflare Workers

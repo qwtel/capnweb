@@ -2,11 +2,11 @@
 // Licensed under the MIT license found in the LICENSE.txt file or at:
 //     https://opensource.org/license/mit
 
-import { Codec, TypeForRpc, WireMessage } from "../codec.js";
-import { typeForRpc } from "../core.js";
+import { Codec, JSON_CODEC, WireMessage } from "./codec.js";
+import { TypeForRpc } from "./core.js";
 
-export class ObjectCodec implements Codec {
-  readonly name: "object" = "object";
+export class PostMessageCodec implements Codec {
+  readonly name = "postmessage";
 
   encode(message: any): WireMessage {
     return message;
@@ -18,7 +18,7 @@ export class ObjectCodec implements Codec {
 
   typeForRpc(value: unknown): TypeForRpc {
     // Start with base classification.
-    const base = typeForRpc(value);
+    const base = JSON_CODEC.typeForRpc(value);
     if (base !== "unsupported") {
       // In object mode, treat some special JSON encodings as primitives to avoid tagging.
       switch (base) {
@@ -65,4 +65,4 @@ export class ObjectCodec implements Codec {
   }
 }
 
-export const OBJECT_CODEC = new ObjectCodec();
+export const POSTMESSAGE_CODEC = new PostMessageCodec();

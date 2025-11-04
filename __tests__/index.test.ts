@@ -8,7 +8,7 @@ import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTranspor
          newHttpBatchRpcSession, JSON_CODEC} from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 import type { Codec, WireMessage } from "../src/codec.js";
-import { OBJECT_CODEC } from "../src/contrib/object-codec.js";
+import { POSTMESSAGE_CODEC } from "../src/postmessage-codec.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '123': 123,
@@ -1379,7 +1379,7 @@ describe.each(Codecs)("WebSockets [%s]", (codec) => {
   });
 });
 
-describe.each([...Codecs, OBJECT_CODEC])("MessagePorts [%s]", (codec) => {
+describe.each([...Codecs, POSTMESSAGE_CODEC])("MessagePorts [%s]", (codec) => {
   it("can communicate over MessageChannel", async () => {
     // Create a MessageChannel for communication
     let channel = new MessageChannel();
