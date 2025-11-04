@@ -244,7 +244,6 @@ describe("local stub", () => {
     let outerStub = new RpcStub(outerObject);
 
     expect(await outerStub.value).toBe(42);
-    // @ts-ignore: begone
     expect(await outerStub.inner.square(4)).toBe(16);
   });
 

@@ -48,8 +48,22 @@ interface StubBase<T extends Serializable<T>> extends Disposable {
   dup(): this;
   onRpcBroken(callback: (error: any) => void): void;
 }
+
+/**
+ * Takes the raw type of a remote object, function or class in the other thread and returns the type as it is visible to
+ * the local thread from the stub.
+ */
 export type Stub<T extends Serializable<T>> =
-    T extends object ? Provider<T> & StubBase<T> : StubBase<T>;
+  // Handle properties
+  (T extends object ? StubObject<T> : T) &
+    // Handle call signature (if present)
+    (T extends (...args: infer TArguments) => infer TReturn
+      ? (
+          ...args: { [I in keyof TArguments]: UnstubOrClone<TArguments[I]> }
+        ) => Promisify<StubOrClone<Awaited<TReturn>>>
+      : unknown) &
+    // Include additional special stub methods available on the stub.
+    StubBase<T>;
 
 type TypedArray =
   | Uint8Array
@@ -101,8 +115,7 @@ export type Stubify<T> =
   : T;
 
 // Recursively rewrite all `Stub<T>`s with the corresponding `T`s.
-// Note we use `StubBase` instead of `Stub` here to avoid circular dependencies:
-// `Stub` depends on `Provider`, which depends on `Unstubify`, which would depend on `Stub`.
+// Note we use `StubBase` instead of `Stub` here to avoid circular dependencies.
 // prettier-ignore
 type UnstubifyInner<T> =
   T extends StubBase<infer V> ? (T | V)  // can provide either stub or local RpcTarget
@@ -124,48 +137,94 @@ type UnstubifyAll<A extends any[]> = { [I in keyof A]: Unstubify<A[I]> };
 // Note `unknown & T` is equivalent to `T`.
 type MaybeDisposable<T> = T extends object ? Disposable : unknown;
 
+/**
+ * Takes a type and wraps it in a Promise, if it not already is one.
+ * This is to avoid `Promise<Promise<T>>`.
+ */
+type Promisify<T> = T extends PromiseLike<unknown> ? T : Promise<T>;
+
+/**
+ * Helper type for the `map()` method that allows pipelining operations.
+ * If T is an array, maps over elements; otherwise maps over the value itself.
+ */
+type MapMethod<T> =
+  T extends Array<infer U>
+    ? {
+        map<V>(callback: (elem: U) => V): StubResult<Array<V>>;
+      }
+    : {
+        map<V>(callback: (value: NonNullable<T>) => V): StubResult<Array<V>>;
+      };
+
 // Type for method return or property on an RPC interface.
 // - Stubable types are replaced by stubs.
 // - Serializable types are passed by value, with stubable types replaced by stubs
 //   and a top-level `Disposer`.
 // Everything else can't be passed over RPC.
 // Technically, we use custom thenables here, but they quack like `Promise`s.
-// Intersecting with `(Maybe)Provider` allows pipelining.
+// Intersecting with `Stub<R>` allows pipelining when R is Stubable.
+// The `map()` method allows pipelining operations on the result value.
 // prettier-ignore
-type Result<R> =
-  R extends Stubable ? Promise<Stub<R>> & Provider<R> & StubBase<R>
-  : R extends Serializable<R> ? Promise<Stubify<R> & MaybeDisposable<R>> & Provider<R> & StubBase<R>
-  : never;
+type StubResult<R> =
+  (R extends Stubable
+    ? Promisify<Stub<Awaited<R>>> & Stub<Awaited<R>> & StubBase<Awaited<R>>
+    : R extends Serializable<R> ? Promisify<Stubify<Awaited<R>> & MaybeDisposable<Awaited<R>>> & StubBase<Awaited<R>> 
+    : never) & MapMethod<Awaited<R>>
 
-// Type for method or property on an RPC interface.
-// For methods, unwrap `Stub`s in parameters, and rewrite returns to be `Result`s.
-// Unwrapping `Stub`s allows calling with `Stubable` arguments.
-// For properties, rewrite types to be `Result`s.
-// In each case, unwrap `Promise`s.
-type MethodOrProperty<V> = V extends (...args: infer P) => infer R
-  ? (...args: UnstubifyAll<P>) => Result<Awaited<R>>
-  : Result<Awaited<V>>;
+/**
+ * Takes the raw type of a remote property and returns the type that is visible to the local thread on the stub.
+ *
+ * Note: This needs to be its own type alias, otherwise it will not distribute over unions.
+ * See https://www.typescriptlang.org/docs/handbook/advanced-types.html#distributive-conditional-types
+ */
+type StubProperty<T> =
+  // If the value is a function, it becomes a callable stub that returns StubResult.
+  // If it's a Stubable, it becomes a stub.
+  // Otherwise, the property is converted to a StubResult that resolves the cloned/stubified value with pipelining support.
+  T extends (...args: infer P) => infer R
+    ? (...args: { [I in keyof P]: UnstubOrClone<P[I]> }) => StubResult<Awaited<R>>
+    : T extends Stubable
+    ? Stub<T>
+    : StubResult<T>;
 
-// Type for the callable part of an `Provider` if `T` is callable.
-// This is intersected with methods/properties.
-type MaybeCallableProvider<T> = T extends (...args: any[]) => any
-  ? MethodOrProperty<T>
-  : unknown;
+/**
+ * Proxies `T` if it is a `Stubable`, clones/stubifies it otherwise.
+ */
+type StubOrClone<T> = T extends Stubable ? Stub<T> : Stubify<T>;
 
-// Base type for all other types providing RPC-like interfaces.
-// Rewrites all methods/properties to be `MethodOrProperty`s, while preserving callable types.
-export type Provider<T> = MaybeCallableProvider<T> &
-  (T extends Array<infer U>
+/**
+ * Inverse of `StubOrClone<T>`.
+ * Allows passing Stubs, StubResults (promises), and StubObjects as arguments.
+ * Promises are automatically resolved before delivery.
+ */
+type UnstubOrClone<T> = 
+  // Handle Stub<T> - unwrap to T or allow Stub itself
+  T extends Stub<infer U>
+    ? U & Stubable | Stub<U>
+    // Handle StubObject<Stubable>
+    : T extends StubObject<Stubable>
+    ? Unstubify<T>
+    // Handle StubResult<T> (promises) - unwrap to the underlying type
+    : T extends StubResult<infer U>
+    ? T | UnstubOrClone<U>
+    // For any type T, allow StubResult<T> (promise pipelining) or the type itself
+    : StubResult<T> | T;
+
+/**
+ * Takes the raw type of a remote object in the other thread and returns the type as it is visible to the local thread
+ * when proxied with a stub.
+ *
+ * This does not handle call signatures, which is handled by the more general `Stub<T>` type.
+ *
+ * @template T The raw type of a remote object as seen in the other thread.
+ */
+type StubObject<T> =
+  // Handle arrays specially with numeric indices and map() method
+  T extends Array<infer U>
     ? {
-        [key: number]: MethodOrProperty<U>;
-      } & {
-        map<V>(callback: (elem: U) => V): Result<Array<V>>;
-      }
-    : {
-        [K in Exclude<
-          keyof T,
-          symbol | keyof StubBase<never>
-        >]: MethodOrProperty<T[K]>;
-      } & {
-        map<V>(callback: (value: NonNullable<T>) => V): Result<Array<V>>;
-      });
+        [key: number]: StubProperty<U>;
+      } & MapMethod<T>
+    : // Handle regular objects with all properties and map() method
+      {
+        [P in keyof T as Exclude<P, symbol>]: StubProperty<T[P]>;
+      } & MapMethod<T>;

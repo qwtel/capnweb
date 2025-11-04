@@ -7,6 +7,7 @@ declare module 'vitest' {
     "testServerHost-json": string
     "testServerHost-v8": string
     "testServerHost-object": never
+    "testServerHost-postmessage": never
   }
 }
 
