@@ -14,7 +14,7 @@ const CLOSE = '@cloudflare/capnweb/close';
 // Security concerns (e.g., targetOrigin) are intentionally not modeled here.
 export interface Endpoint {
   postMessage(message: any, ...args: any[]): any;
-  addEventListener(type: "message" | "messageerror", listener: (event: any) => void, ...args: any[]): any;
+  addEventListener(type: "message" | "messageerror", listener: (event: MessageEvent) => void, ...args: any[]): any;
   start?: () => void;
   close?: () => void;
 }
@@ -45,27 +45,26 @@ class MessagePortTransport implements RpcTransport {
     // Start listening for messages if supported (e.g., MessagePort).
     port.start?.();
 
-    port.addEventListener("message", (event: any) => {
+    port.addEventListener("message", (event: MessageEvent<any>) => {
       if (this.#error) {
         // Ignore further messages.
       } else if (event?.data?.type === CLOSE) {
         // Peer is signaling that they're closing the connection
         this.#receivedError(new Error("Peer closed MessagePort connection."));
       } else if (event?.data?.type === MESSAGE) {
-        const msg: WireMessage = event.data.value;
         if (this.#receiveResolver) {
-          this.#receiveResolver(msg);
+          this.#receiveResolver(event.data.value);
           this.#receiveResolver = undefined;
           this.#receiveRejecter = undefined;
         } else {
-          this.#receiveQueue.push(msg);
+          this.#receiveQueue.push(event.data.value);
         }
       } else {
         this.#receivedError(new TypeError("Received unsupported message from MessagePort."));
       }
     });
 
-    port.addEventListener("messageerror", (_event: any) => {
+    port.addEventListener("messageerror", (event: MessageEvent) => {
       this.#receivedError(new Error("MessagePort message error."));
     });
   }
@@ -73,7 +72,7 @@ class MessagePortTransport implements RpcTransport {
   #port: Endpoint;
   #receiveResolver?: (message: WireMessage) => void;
   #receiveRejecter?: (err: any) => void;
-  #receiveQueue: (WireMessage)[] = [];
+  #receiveQueue: WireMessage[] = [];
   #error?: any;
 
   async send(message: WireMessage): Promise<void> {
@@ -104,10 +103,9 @@ class MessagePortTransport implements RpcTransport {
       // Ignore errors when sending close signal - port might already be closed
     }
 
-    // Close if supported (e.g., MessagePort).
     try {
       this.#port.close?.();
-    } catch (_err) {}
+    } catch {}
 
     if (!this.#error) {
       this.#error = reason;

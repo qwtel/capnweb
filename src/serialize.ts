@@ -161,7 +161,6 @@ export class Devaluator {
         }
 
       case "raw":
-        // Supported directly by JSON.
         return value;
 
       case "object": {

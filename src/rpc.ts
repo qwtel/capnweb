@@ -527,9 +527,9 @@ class RpcSessionImpl implements Importer, Exporter {
       return;
     }
 
-    let wire: WireMessage;
+    let msgText: WireMessage;
     try {
-      wire = this.codec.encode(msg);
+      msgText = this.codec.encode(msg);
     } catch (err) {
       // If JSON stringification failed, there's something wrong with the devaluator, as it should
       // not allow non-JSONable values to be injected in the first place.
@@ -537,7 +537,7 @@ class RpcSessionImpl implements Importer, Exporter {
       throw err;
     }
 
-    this.transport.send(wire)
+    this.transport.send(msgText)
         // If send fails, abort the connection, but don't try to send an abort message since
         // that'll probably also fail.
         .catch(err => this.abort(err, false));

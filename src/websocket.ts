@@ -62,13 +62,12 @@ class WebSocketTransport implements RpcTransport {
       if (this.#error) {
         // Ignore further messages.
       } else if (typeof event.data === "string" || ArrayBuffer.isView(event.data) || event.data instanceof ArrayBuffer) {
-        const msg: WireMessage = event.data;
         if (this.#receiveResolver) {
-          this.#receiveResolver(msg);
+          this.#receiveResolver(event.data);
           this.#receiveResolver = undefined;
           this.#receiveRejecter = undefined;
         } else {
-          this.#receiveQueue.push(msg);
+          this.#receiveQueue.push(event.data);
         }
       } else {
         this.#receivedError(new TypeError("Received unsupported message type from WebSocket."));
