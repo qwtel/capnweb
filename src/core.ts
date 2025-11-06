@@ -16,6 +16,20 @@ if (!Symbol.asyncDispose) {
   (Symbol as any).asyncDispose = Symbol.for('asyncDispose');
 }
 
+// Polyfill Promise.withResolvers() for old Safari versions (ugh), Hermes (React Native), and
+// maybe others.
+if (!Promise.withResolvers) {
+  Promise.withResolvers = function<T>(): PromiseWithResolvers<T> {
+    let resolve: (value: T | PromiseLike<T>) => void;
+    let reject: (reason?: any) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve: resolve!, reject: reject! };
+  };
+}
+
 export let workersModule: any = (globalThis as any)[WORKERS_MODULE_SYMBOL];
 
 export interface RpcTarget {
@@ -347,6 +361,10 @@ export class RpcStub extends RpcTarget {
     let {hook, pathIfPromise} = this[RAW_STUB];
     return mapImpl.sendMap(hook, pathIfPromise || [], func);
   }
+
+  toString() {
+    return "[object RpcStub]";
+  }
 }
 
 export class RpcPromise extends RpcStub {
@@ -367,6 +385,10 @@ export class RpcPromise extends RpcStub {
 
   finally(onfinally?: (() => void) | undefined | null): Promise<unknown> {
     return pullPromise(this).finally(...arguments);
+  }
+
+  toString() {
+    return "[object RpcPromise]";
   }
 }
 
@@ -1155,7 +1177,15 @@ function followPath(value: unknown, parent: object | undefined,
       case "rpc-thenable": {
         // Must be prototype property, and must NOT be inherited from `Object`.
         if (Object.hasOwn(<object>value, part)) {
-          value = undefined;
+          // We throw an error in this case, rather than return undefined, because otherwise
+          // people tend to get confused about this. If you don't want it to be possible to
+          // probe the existence of your instance properties, make them properly private (prefix
+          // with #).
+          throw new TypeError(
+              `Attempted to access property '${part}', which is an instance property of the ` +
+              `RpcTarget. To avoid leaking private internals, instance properties cannot be ` +
+              `accessed over RPC. If you want to make this property available over RPC, define ` +
+              `it as a method or getter on the class, instead of an instance property.`);
         } else {
           value = (<any>value)[part];
         }

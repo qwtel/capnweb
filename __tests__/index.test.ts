@@ -32,6 +32,10 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '["error","Error","the message"]': new Error("the message"),
   '["error","TypeError","the message"]': new TypeError("the message"),
   '["error","RangeError","the message"]': new RangeError("the message"),
+
+  '["inf"]': Infinity,
+  '["-inf"]': -Infinity,
+  '["nan"]': NaN,
 };
 
 class NotSerializable {
@@ -319,8 +323,16 @@ describe("local stub", () => {
 
     expect(await stub.prototypeProp).toBe("prototype");
     expect(await stub.prototypeMethod()).toBe("method");
-    expect(await (stub as any).instanceProp).toBe(undefined);
-    expect(await (stub as any).dynamicProp).toBe(undefined);
+    await expect(() => (stub as any).instanceProp).rejects.toThrow(new TypeError(
+        "Attempted to access property 'instanceProp', which is an instance property of the " +
+        "RpcTarget. To avoid leaking private internals, instance properties cannot be accessed " +
+        "over RPC. If you want to make this property available over RPC, define it as a method " +
+        "or getter on the class, instead of an instance property."));
+    await expect(() => (stub as any).dynamicProp).rejects.toThrow(new TypeError(
+        "Attempted to access property 'dynamicProp', which is an instance property of the " +
+        "RpcTarget. To avoid leaking private internals, instance properties cannot be accessed " +
+        "over RPC. If you want to make this property available over RPC, define it as a method " +
+        "or getter on the class, instead of an instance property."));
   });
 
   it("does not expose private methods starting with #", async () => {
@@ -400,6 +412,13 @@ describe("local stub", () => {
       [[], [0], [0], [0, 1], [0, 1, 1], [0, 1, 1, 2, 3], [0, 1, 1, 2, 3, 5, 8, 13],
           [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144]],
     ]);
+  });
+
+  it("overrides toString() to at least specify the type", async () => {
+    let stub = new RpcStub(new TestTarget());
+    expect(stub.toString()).toBe("[object RpcStub]");
+    let promise = stub.square(3);
+    expect(promise.toString()).toBe("[object RpcPromise]");
   });
 });
 

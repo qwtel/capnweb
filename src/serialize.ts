@@ -147,6 +147,19 @@ export class Devaluator {
       }
 
       case "primitive":
+        if (typeof value === "number" && !isFinite(value)) {
+          if (value === Infinity) {
+            return ["inf"];
+          } else if (value === -Infinity) {
+            return ["-inf"];
+          } else {
+            return ["nan"];
+          }
+        } else {
+          // Supported directly by JSON.
+          return value;
+        }
+
       case "raw":
         // Supported directly by JSON.
         return value;
@@ -400,6 +413,12 @@ export class Evaluator {
             return undefined;
           }
           break;
+        case "inf":
+          return Infinity;
+        case "-inf":
+          return -Infinity;
+        case "nan":
+          return NaN;
 
         case "import":
         case "pipeline": {
