@@ -92,9 +92,9 @@ type BaseType =
 // Recursively rewrite all `Stubable` types with `Stub`s, and resolve promises.
 // prettier-ignore
 export type Stubify<T> =
-  T extends Stubable ? Stub<T>
+  T extends StubBase<any> ? T
+  : T extends Stubable ? Stub<T>
   : T extends Promise<infer U> ? Stubify<U>
-  : T extends StubBase<any> ? T
   : T extends Map<infer K, infer V> ? Map<Stubify<K>, Stubify<V>>
   : T extends Set<infer V> ? Set<Stubify<V>>
   : T extends Array<infer V> ? Array<Stubify<V>>
@@ -120,7 +120,7 @@ type UnstubifyInner<T> =
 
 // You can put promises anywhere in the params and they'll be resolved before delivery.
 // (This also covers RpcPromise, because it's defined as being a Promise.)
-type Unstubify<T> = UnstubifyInner<T> | Promise<UnstubifyInner<T>>
+type Unstubify<T> = UnstubifyInner<T> | PromiseLike<UnstubifyInner<T>>
 
 type UnstubifyAll<A extends any[]> = { [I in keyof A]: Unstubify<A[I]> };
 
@@ -148,9 +148,14 @@ type MapMethod<T> =
 // Intersecting with `Stub<R>` allows pipelining.
 // prettier-ignore
 type Result<R> =
-  R extends Stubable ? Promise<Stub<R>> & Stub<R>
-  : R extends RpcCompatible<R> ? Promise<Stubify<R> & MaybeDisposable<R>> & StubBase<R> & MapMethod<R>
+  R extends Stubable ? RpcStubResult<R>
+  : R extends RpcCompatible<R> ? RpcPromiseResult<R>
   : never;
+
+// By splitting these into separate types, editors will display them much nicer.
+type RpcStubResult<T extends Stubable> = Promise<Stub<T>> & Stub<T>;
+type RpcPromiseResult<T extends RpcCompatible<T>> =
+  Promise<Stubify<T> & MaybeDisposable<T>> & StubBase<T> & MapMethod<T>;
 
 // Type for method or property on an RPC interface.
 // For methods, unwrap `Stub`s in parameters, and rewrite returns to be `Result`s.
