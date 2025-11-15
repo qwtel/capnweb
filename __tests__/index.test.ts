@@ -3,12 +3,13 @@
 //     https://opensource.org/license/mit
 
 import { expect, it, describe, inject } from "vitest"
-import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
+import { deserialize, serialize, raw, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
          RpcStub, newWebSocketRpcSession, newMessagePortRpcSession,
          newHttpBatchRpcSession, JSON_CODEC} from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 import type { Codec, WireMessage } from "../src/codec.js";
 import { POSTMESSAGE_CODEC } from "../src/postmessage-codec.js";
+import { RAW_SUBTREE_BRAND } from "../src/symbols.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '123': 123,
@@ -114,6 +115,84 @@ describe("simple serialization", () => {
   it("allows omitting bytes type", () => {
     expect(deserialize('["bytes","aGVsbG8h"]')).toStrictEqual(new TextEncoder().encode("hello!"));
   })
+});
+
+// =======================================================================================
+
+describe("raw data opt-out", () => {
+  it("marks objects as raw data", () => {
+    const obj = { foo: 123, bar: "test" };
+    const rawObj = raw(obj);
+    expect(rawObj).toBe(obj);
+    expect(RAW_SUBTREE_BRAND in rawObj).toBe(true);
+  });
+
+  it("marks arrays as raw data", () => {
+    const arr = [1, 2, 3];
+    const rawArr = raw(arr);
+    expect(rawArr).toBe(arr);
+    expect(RAW_SUBTREE_BRAND in rawArr).toBe(true);
+  });
+
+  it("serializes raw data with raw subtree marker", () => {
+    const data = { foo: 123, bar: { nested: "value" } };
+    const rawData = raw(data);
+    
+    const serialized = serialize(rawData);
+    expect(serialized).toBe('["raw",{"foo":123,"bar":{"nested":"value"}},16]');
+    
+    const deserialized = deserialize(serialized);
+    expect(deserialized).toStrictEqual(data);
+  });
+
+  it("serializes raw arrays with raw-subtree marker", () => {
+    const arr = [1, 2, { nested: "value" }];
+    const rawArr = raw(arr);
+    
+    const serialized = serialize(rawArr);
+    expect(serialized).toBe('["raw",[1,2,{"nested":"value"}],16]');
+    
+    const deserialized = deserialize(serialized);
+    expect(deserialized).toStrictEqual(arr);
+  });
+
+  it("allows raw data to be nested in regular structures", () => {
+    const largeData = {
+      level1: {
+        level2: {
+          level3: {
+            deep: "nested",
+            array: [1, 2, 3]
+          }
+        }
+      }
+    };
+    const rawData = raw(largeData);
+    
+    const result = {
+      special: 123n,
+      data: rawData
+    };
+    
+    const serialized = serialize(result);
+    const deserialized = deserialize(serialized);
+    
+    expect(deserialized).toStrictEqual({
+      special: 123n,
+      data: largeData
+    });
+  });
+
+  it("skips traversal of raw data (doesn't tag date)", () => {
+    const data = {
+      date: new Date(0),
+    };
+    const rawData = raw(data);
+    
+    // Should serialize with raw-subtree marker
+    const serialized = serialize(rawData);
+    expect(serialized).toBe('["raw",{"date":"1970-01-01T00:00:00.000Z"},16]');
+  });
 });
 
 // =======================================================================================

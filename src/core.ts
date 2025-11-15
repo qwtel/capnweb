@@ -42,7 +42,7 @@ export type PropertyPath = (string | number)[];
 
 export type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
     "bigint" | "bytes" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" |
-    "error-raw" | "undefined" | "raw";
+    "error-raw" | "undefined" | "raw" | "raw-subtree";
 
 export const typeForRpc = JSON_CODEC.typeForRpc;
 
@@ -709,6 +709,7 @@ export class RpcPayload {
 
       case "primitive":
       case "raw":
+      case "raw-subtree":
       case "bigint":
       case "date":
       case "bytes":
@@ -979,6 +980,7 @@ export class RpcPayload {
       case "unsupported":
       case "primitive":
       case "raw":
+      case "raw-subtree":
       case "bigint":
       case "bytes":
       case "date":
@@ -1067,6 +1069,7 @@ export class RpcPayload {
       case "unsupported":
       case "primitive":
       case "raw":
+      case "raw-subtree":
       case "bigint":
       case "bytes":
       case "date":
@@ -1205,6 +1208,7 @@ function followPath(value: unknown, parent: object | undefined,
 
       case "primitive":
       case "raw":
+      case "raw-subtree":
       case "bigint":
       case "bytes":
       case "date":

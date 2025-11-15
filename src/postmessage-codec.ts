@@ -2,8 +2,10 @@
 // Licensed under the MIT license found in the LICENSE.txt file or at:
 //     https://opensource.org/license/mit
 
-import { Codec, JSON_CODEC, WireMessage } from "./codec.js";
+import { Codec, isRawSubtreeBranded, JSON_CODEC, WireMessage } from "./codec.js";
 import { TypeForRpc } from "./core.js";
+import { RawFeatures } from "./serialize.js";
+import { RAW_SUBTREE_BRAND } from "./symbols.js";
 
 export class PostMessageCodec implements Codec {
   readonly name = "postmessage";
@@ -22,6 +24,7 @@ export class PostMessageCodec implements Codec {
     if (base !== "unsupported") {
       // In object mode, treat some special JSON encodings as primitives to avoid tagging.
       switch (base) {
+        case "primitive":
         case "bigint":
         case "date":
         case "bytes":
@@ -38,21 +41,22 @@ export class PostMessageCodec implements Codec {
     // Treat them as primitives (raw) for purposes of devaluation (pass-through).
     try {
       if (typeof value === "object" && value !== null) {
+        if (isRawSubtreeBranded(value) && value[RAW_SUBTREE_BRAND] <= RawFeatures.StructuredClone) {
+          return "raw-subtree";
+        }
+
         if (ArrayBuffer.isView(value)) {
           return "raw";
         }
 
-        // ArrayBuffer
         if (value instanceof ArrayBuffer) {
           return "raw";
         }
 
-        // Map / Set
         if (value instanceof Map || value instanceof Set) {
-          return "raw";
-        }
+        return "raw";
+      }
 
-        // RegExp
         if (value instanceof RegExp) {
           return "raw";
         }

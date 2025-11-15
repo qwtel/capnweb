@@ -3,7 +3,7 @@
 //     https://opensource.org/license/mit
 
 import { RpcTarget as RpcTargetImpl, RpcStub as RpcStubImpl, RpcPromise as RpcPromiseImpl } from "./core.js";
-import { serialize, deserialize } from "./serialize.js";
+import { serialize, deserialize, raw } from "./serialize.js";
 import { RpcTransport, RpcSession as RpcSessionImpl, RpcSessionOptions } from "./rpc.js";
 import { RpcTargetBranded, RpcCompatible, Stub, Stubify, __RPC_TARGET_BRAND } from "./types.js";
 import { newWebSocketRpcSession as newWebSocketRpcSessionImpl,
@@ -22,7 +22,7 @@ export { POSTMESSAGE_CODEC } from "./postmessage-codec.js";
 forceInitMap();
 
 // Re-export public API types.
-export { serialize, deserialize, newWorkersWebSocketRpcResponse, newHttpBatchRpcResponse,
+export { serialize, deserialize, raw, newWorkersWebSocketRpcResponse, newHttpBatchRpcResponse,
          nodeHttpBatchRpcResponse };
 export type { RpcTransport, RpcSessionOptions, RpcCompatible };
 

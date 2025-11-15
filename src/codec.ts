@@ -3,6 +3,8 @@
 //     https://opensource.org/license/mit
 
 import { RpcStub, RpcPromise, RpcTarget, type TypeForRpc, workersModule } from "./core.js";
+import { RawFeatures, RawSubtreeBranded } from "./serialize.js";
+import { RAW_SUBTREE_BRAND } from "./symbols.js";
 
 export type WireMessage = string | Uint8Array | ArrayBuffer | object;
 
@@ -63,6 +65,11 @@ export class JsonCodec implements Codec {
       return "primitive";
     }
 
+    // Check for raw data symbol first, before any other prototype checks
+    if (isRawSubtreeBranded(value) && value[RAW_SUBTREE_BRAND] === RawFeatures.JSON) {
+      return "raw-subtree";
+    }
+
     // Aside from RpcTarget, we generally don't support serializing *subclasses* of serializable
     // types, so we switch on the exact prototype rather than use `instanceof` here.
     let prototype = Object.getPrototypeOf(value);
@@ -119,6 +126,10 @@ export class JsonCodec implements Codec {
         return "unsupported";
     }
   }
+}
+
+export function isRawSubtreeBranded(x: object|Function): x is RawSubtreeBranded {
+  return RAW_SUBTREE_BRAND in x && typeof (<any>x)[RAW_SUBTREE_BRAND] === "number";
 }
 
 export const JSON_CODEC = new JsonCodec();

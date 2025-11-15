@@ -3,6 +3,7 @@
 //     https://opensource.org/license/mit
 
 import { StubHook, RpcPayload, RpcStub, RpcPromise, LocatedPromise, RpcTarget, PropertyPath, unwrapStubAndPath, JSON_CODEC } from "./core.js";
+import { RAW_SUBTREE_BRAND } from "./symbols.js";
 import type { Codec, WireMessage } from "./codec.js";
 
 export type ImportId = number;
@@ -163,6 +164,9 @@ export class Devaluator {
       case "raw":
         return value;
 
+      case "raw-subtree":
+        return ["raw", value, (<RawSubtreeBranded>value)[RAW_SUBTREE_BRAND]];
+
       case "object": {
         let object = <Record<string, unknown>>value;
         let result: Record<string, unknown> = {};
@@ -307,6 +311,48 @@ export function serialize(value: unknown, codec: Codec = JSON_CODEC): WireMessag
   return codec.encode(Devaluator.devaluate(value, codec));
 }
 
+export enum RawFeatures {
+  JSON = 0b0,
+  Date = 1 << 0,
+  Uint8Array = 1 << 1,
+  BigInt = 1 << 2,
+  Map = 1 << 3,
+  Set = 1 << 4,
+  TypedArrays = 1 << 5,
+  ArrayBuffer = 1 << 6,
+  Error = 1 << 7, 
+  DataView = 1 << 8,
+  RegExp = 1 << 9,
+  StructuredClone = 0x3FF, // all of the above
+};
+
+export interface RawSubtreeBranded {  
+  [RAW_SUBTREE_BRAND]: RawFeatures;
+}
+
+/**
+ * Marks a value as "raw" data, opting it out of expensive tree traversal during serialization.
+ * 
+ * When a value is marked as raw, the serialization logic will skip traversing its nested
+ * structure, assuming no RPC targets exist within it. This is useful when you can statically
+ * guarantee that a subtree contains no RPC targets, avoiding unnecessary traversal of large
+ * data structures.
+ * 
+ * Note: This only marks the immediate value, not nested objects within it. The whole point
+ * is to avoid traversing nested structures.
+ * 
+ * Optionally, can specify the types that a given codec must support to safely transport the value.
+ */
+export function raw<T extends object>(x: T, level: RawFeatures = RawFeatures.JSON): T & RawSubtreeBranded {
+  Object.defineProperty(x, RAW_SUBTREE_BRAND, { 
+    value: level, 
+    enumerable: false, 
+    configurable: true, 
+    writable: true
+  });
+  return x as T & RawSubtreeBranded;
+}
+
 // =======================================================================================
 
 export interface Importer {
@@ -410,6 +456,12 @@ export class Evaluator {
         case "undefined":
           if (value.length === 1) {
             return undefined;
+          }
+          break;
+        case "raw":
+          // Raw subtree marker - return the data as-is without traversal
+          if (value.length === 3 && typeof value[2] === "number") {
+            return raw(value[1], value[2]);
           }
           break;
         case "inf":

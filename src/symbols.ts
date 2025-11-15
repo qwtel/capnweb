@@ -3,3 +3,5 @@
 //     https://opensource.org/license/mit
 
 export let WORKERS_MODULE_SYMBOL = Symbol("workers-module");
+
+export let RAW_SUBTREE_BRAND = Symbol.for('@cloudflare/capnweb/raw-subtree');

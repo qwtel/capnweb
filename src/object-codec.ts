@@ -5,6 +5,10 @@
 import { Codec, JSON_CODEC, WireMessage } from "./codec.js";
 import { TypeForRpc } from "./core.js";
 
+/** 
+ * Same as JSON codec, but skips the stringification step. 
+ * Useful for transports that perform JSON-stringification internally. 
+ */
 export class ObjectCodec implements Codec {
   readonly name = "object";
 
