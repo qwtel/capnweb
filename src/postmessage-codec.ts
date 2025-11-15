@@ -1,7 +1,3 @@
-// Copyright (c) 2025 Cloudflare, Inc.
-// Licensed under the MIT license found in the LICENSE.txt file or at:
-//     https://opensource.org/license/mit
-
 import { Codec, isRawSubtreeBranded, JSON_CODEC, WireMessage } from "./codec.js";
 import { TypeForRpc } from "./core.js";
 import { RawFeatures } from "./serialize.js";

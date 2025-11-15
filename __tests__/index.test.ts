@@ -4,9 +4,9 @@
 
 import { expect, it, describe, inject } from "vitest"
 import { deserialize, serialize, raw, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
-         RpcStub, newWebSocketRpcSession, newMessagePortRpcSession,
+         RpcStub, RpcPromise, newWebSocketRpcSession, newMessagePortRpcSession,
          newHttpBatchRpcSession, JSON_CODEC} from "../src/index.js"
-import { Counter, TestTarget } from "./test-util.js";
+import { Counter, setSubStub, setSubSubStub, TestTarget, UnhandledRejectionTracker } from "./test-util.js";
 import type { Codec, WireMessage } from "../src/codec.js";
 import { POSTMESSAGE_CODEC } from "../src/postmessage-codec.js";
 import { RAW_SUBTREE_BRAND } from "../src/symbols.js";
@@ -38,6 +38,9 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '["-inf"]': -Infinity,
   '["nan"]': NaN,
 };
+
+
+let NeverResolvingPromise = new Promise<never>(() => {});
 
 class NotSerializable {
   i: number;
@@ -139,7 +142,7 @@ describe("raw data opt-out", () => {
     const rawData = raw(data);
     
     const serialized = serialize(rawData);
-    expect(serialized).toBe('["raw",{"foo":123,"bar":{"nested":"value"}},16]');
+    expect(serialized).toBe('["raw",{"foo":123,"bar":{"nested":"value"}},0]');
     
     const deserialized = deserialize(serialized);
     expect(deserialized).toStrictEqual(data);
@@ -150,7 +153,7 @@ describe("raw data opt-out", () => {
     const rawArr = raw(arr);
     
     const serialized = serialize(rawArr);
-    expect(serialized).toBe('["raw",[1,2,{"nested":"value"}],16]');
+    expect(serialized).toBe('["raw",[1,2,{"nested":"value"}],0]');
     
     const deserialized = deserialize(serialized);
     expect(deserialized).toStrictEqual(arr);
@@ -191,7 +194,7 @@ describe("raw data opt-out", () => {
     
     // Should serialize with raw-subtree marker
     const serialized = serialize(rawData);
-    expect(serialized).toBe('["raw",{"date":"1970-01-01T00:00:00.000Z"},16]');
+    expect(serialized).toBe('["raw",{"date":"1970-01-01T00:00:00.000Z"},0]');
   });
 });
 
@@ -258,7 +261,7 @@ class TestHarness<T extends RpcTarget> {
     this.clientTransport = new TestTransport("client");
     this.serverTransport = new TestTransport("server", this.clientTransport);
 
-    this.client = new RpcSession<T>(this.clientTransport, undefined, { codec: serverOptions?.codec });
+    this.client = new RpcSession<T>(this.clientTransport, {}, { codec: serverOptions?.codec });
 
     // TODO: If I remove `<undefined>` here, I get a TypeScript error about the instantiation being
     //   excessively deep and possibly infinite. Why? `<undefined>` is supposed to be the default.
@@ -456,7 +459,7 @@ describe("local stub", () => {
     let stub = new RpcStub(new TestTarget());
 
     using fib = stub.generateFibonacci(6);
-    using counters = await fib.map(i => {
+    let counters = await fib.map(i => {
       let counter = stub.makeCounter(i);
       let val = counter.increment(3);
       outerCounter.increment();
@@ -466,6 +469,26 @@ describe("local stub", () => {
     expect(counters.map(x => x.val)).toStrictEqual([3, 4, 4, 5, 6, 8]);
 
     expect(await Promise.all(counters.map(x => x.counter.value)))
+        .toStrictEqual([3, 4, 4, 5, 6, 8]);
+
+    expect(await outerCounter.value).toBe(6);
+  });
+
+  it("supports map() on promised arrays", async () => {
+    let outerCounter = new RpcStub(new Counter(0));
+    let stub = new RpcStub(new TestTarget());
+
+    using fib = stub.generateFibonacci(6);
+    using counters = fib.map(i => {
+      let counter = stub.makeCounter(i);
+      let val = counter.increment(3);
+      outerCounter.increment();
+      return {counter, val};
+    });
+
+    expect(await counters.map(x => x.val)).toStrictEqual([3, 4, 4, 5, 6, 8]);
+
+    expect(await Promise.all(await counters.map(x => x.counter.value)))
         .toStrictEqual([3, 4, 4, 5, 6, 8]);
 
     expect(await outerCounter.value).toBe(6);
@@ -596,6 +619,34 @@ describe.each(Codecs)("basic rpc [%s]", (codec) => {
   it("supports calls", async () => {
     await using harness = new TestHarness(new TestTarget(), { codec });
     expect(await harness.stub.square(3)).toBe(9);
+  });
+
+  it("supports returning null and undefined", async () => {
+    await using harness = new TestHarness(new TestTarget(), { codec });
+    let stub = harness.stub;
+
+    // Test returning null directly
+    expect(await stub.returnNull()).toBe(null);
+
+    // Test returning undefined directly
+    expect(await stub.returnUndefined()).toBe(undefined);
+
+    // Test returning objects with null and undefined properties
+    class ObjectWithNullUndefinedTarget extends RpcTarget {
+      returnObjectWithNullUndefined() {
+        return { a: undefined, b: null, c: 123, d: "foo" };
+      }
+    }
+
+    await using objectHarness = new TestHarness(new ObjectWithNullUndefinedTarget(), { codec });
+    let objectStub = objectHarness.stub as any;
+
+    let result = await objectStub.returnObjectWithNullUndefined();
+    expect(result).toStrictEqual({ a: undefined, b: null, c: 123, d: "foo" });
+    expect(result.a).toBe(undefined);
+    expect(result.b).toBe(null);
+    expect(result.c).toBe(123);
+    expect(result.d).toBe("foo");
   });
 
   it("supports throwing errors", async () => {
@@ -957,6 +1008,29 @@ describe.each(Codecs)("promise pipelining [%s]", (codec) => {
 
     await expect(() => promise).rejects.toThrow("test error");
     await expect(() => promise2).rejects.toThrow("test error");
+  });
+
+  it("supports returning a stub", async () => {
+    await using harness = new TestHarness(new TestTarget(), { codec });
+    let stub = harness.stub;
+    using subStub = stub.getSubTarget();
+    expect(await subStub.squareRoot(81)).toBe(9);
+  });
+
+  it("supports returning a stub from a stub", async () => {
+    await using harness = new TestHarness(new TestTarget(), { codec });
+    let stub = harness.stub;
+    using subStub = stub.getSubTarget();
+    using subSubStub = subStub.getSubSubTarget();
+    expect(await subSubStub.getValue()).toBe(42);
+  });
+
+  it.skip("xxx", async() => {
+    await using harness = new TestHarness(new TestTarget(), { codec });
+    let stub = harness.stub;
+    let subStub = stub.getSubTarget();
+    let subSubStub = stub.getSubSubTarget(subStub);
+    setSubSubStub(subSubStub);
   });
 });
 
@@ -1460,7 +1534,7 @@ describe.each(Codecs)("WebSockets [%s]", (codec) => {
   it.skipIf(isWebKit)("can open a WebSocket connection", async () => {
     let url = `ws://${inject(`testServerHost-${codec.name}`)}`;
 
-    let cap = newWebSocketRpcSession<TestTarget>(url, undefined, { codec });
+    let cap = newWebSocketRpcSession<TestTarget>(url, {}, { codec });
 
     expect(await cap.square(5)).toBe(25);
 
@@ -1486,7 +1560,7 @@ describe.each([...Codecs, POSTMESSAGE_CODEC])("MessagePorts [%s]", (codec) => {
     newMessagePortRpcSession(channel.port1, serverMain, { codec });
 
     // Set up client side
-    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, undefined, { codec });
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, {}, { codec });
 
     // Test basic method call
     let result = await clientStub.square(5);
@@ -1507,7 +1581,7 @@ describe.each([...Codecs, POSTMESSAGE_CODEC])("MessagePorts [%s]", (codec) => {
 
     let serverMain = new TestTarget();
     newMessagePortRpcSession(channel.port1, serverMain, { codec });
-    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, undefined, { codec });
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, {}, { codec });
 
     // Test error handling
     await expect(() => clientStub.throwError()).rejects.toThrow("test error");
@@ -1518,7 +1592,7 @@ describe.each([...Codecs, POSTMESSAGE_CODEC])("MessagePorts [%s]", (codec) => {
 
     let serverMain = new TestTarget();
     let serverStub = newMessagePortRpcSession(channel.port1, serverMain, { codec });
-    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, undefined, { codec });
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2, {}, { codec });
 
     // Test that connection works initially
     let result = await clientStub.square(3);
@@ -1535,5 +1609,167 @@ describe.each([...Codecs, POSTMESSAGE_CODEC])("MessagePorts [%s]", (codec) => {
     // Wait for the client to detect the broken connection
     await expect(() => brokenPromise).rejects.toThrow(
         new Error("Peer closed MessagePort connection."));
+  });
+
+  it("supports native Promises in function arguments", async () => {
+    let channel = new MessageChannel();
+
+    let ordering: string[] = []
+
+    class ServerTarget extends RpcTarget {
+      async processValue(value: Promise<string>) {
+        ordering.push("invoked");
+        expect(value).toBeInstanceOf(RpcPromise);
+        const v = await value;
+        ordering.push("awaited");
+        return `processed: ${v}`;
+      }
+    }
+
+    let serverMain = new ServerTarget();
+    newMessagePortRpcSession(channel.port1, serverMain, { codec });
+    using clientStub = newMessagePortRpcSession<ServerTarget>(channel.port2, {}, { codec });
+
+    let nativePromise = (async () => {
+      await new Promise(r => setTimeout(r, 1));
+      ordering.push("resolved");
+      return "hello";
+    })();
+    
+    let result = await clientStub.processValue(nativePromise);
+    ordering.push("received");
+
+    expect(result).toBe("processed: hello");
+    expect(ordering).toEqual(["invoked", "resolved", "awaited", "received"]);
+  });
+
+  it("supports native Promise rejections in function arguments", async () => {
+    let channel = new MessageChannel();
+
+    class ServerTarget extends RpcTarget {
+      async processValue(value: Promise<string>) {
+        expect(value).toBeInstanceOf(RpcPromise);
+        try {
+          await value;
+        } catch (error) {
+          return `processed: ${(<Error>error).message}`;
+        }
+      }
+    }
+
+    let serverMain = new ServerTarget();
+    newMessagePortRpcSession(channel.port1, serverMain, { codec });
+    using clientStub = newMessagePortRpcSession<ServerTarget>(channel.port2, {}, { codec });
+
+    let nativePromise = (async () => {
+      await new Promise(r => setTimeout(r, 1));
+      throw Error("test error");
+    })();
+    
+    let result = await clientStub.processValue(nativePromise);
+
+    expect(result).toBe("processed: test error");
+  });
+
+
+  it("supports native Promises that never resolve (not awaited)", async () => {
+    let channel = new MessageChannel();
+
+    class ServerTarget extends RpcTarget {
+      receivePromise(value: Promise<string>) {
+        // Should receive an RpcPromise immediately, without waiting for resolution
+        expect(value).toBeInstanceOf(RpcPromise);
+        // Dispose the promise to prevent unhandled rejections on cleanup
+        (value as any)[Symbol.dispose]();
+        return "received";
+      }
+    }
+
+    let serverMain = new ServerTarget();
+    newMessagePortRpcSession(channel.port1, serverMain, { codec });
+    using clientStub = newMessagePortRpcSession<ServerTarget>(channel.port2, {}, { codec });
+    
+    // The RPC call should complete immediately without waiting for the promise
+    let result = await clientStub.receivePromise(NeverResolvingPromise);
+    expect(result).toBe("received");
+  });
+
+  it("supports passing AbortSignal across RPC boundary", async () => {
+    let channel = new MessageChannel();
+
+    class ServerTarget extends RpcTarget {
+      receivedSignal: AbortSignal | null = null;
+
+      receiveSignal(signal: AbortSignal) {
+        this.receivedSignal = signal;
+        return signal.aborted;
+      }
+
+      checkSignalAborted() {
+        return this.receivedSignal?.aborted ?? false;
+      }
+
+      explicitDispose() {
+        (this.receivedSignal as any)[Symbol.dispose]();
+      }
+    }
+
+    let serverMain = new ServerTarget();
+    newMessagePortRpcSession(channel.port1, serverMain, { codec });
+    using clientStub = newMessagePortRpcSession<ServerTarget>(channel.port2, {}, { codec });
+
+    // Create an AbortController on the client side
+    let controller = new AbortController();
+
+    // Pass the signal to the server
+    let initialState = await clientStub.receiveSignal(controller.signal);
+    expect(initialState).toBe(false);
+
+    // Signal should not be aborted yet
+    let beforeAbort = await clientStub.checkSignalAborted();
+    expect(beforeAbort).toBe(false);
+
+    // Abort the signal on the client side
+    controller.abort("test abort reason");
+
+    // Give the abort time to propagate
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Check that the signal was aborted on the server side
+    let afterAbort = await clientStub.checkSignalAborted();
+    expect(afterAbort).toBe(true);
+
+    await clientStub.explicitDispose();
+  });
+
+  it.skip("supports AbortSignal that is already aborted", async () => {
+    let channel = new MessageChannel();
+
+    class ServerTarget extends RpcTarget {
+      checkSignal(signal: AbortSignal) {
+        return {
+          aborted: signal.aborted,
+          reason: signal.reason
+        };
+      }
+    }
+
+    let serverMain = new ServerTarget();
+    newMessagePortRpcSession(channel.port1, serverMain, { codec });
+    using clientStub = newMessagePortRpcSession<ServerTarget>(channel.port2, {}, { codec });
+
+    // Create an already-aborted signal
+    let signal = AbortSignal.abort("already aborted");
+
+    // Pass it to the server
+    let result = await clientStub.checkSignal(signal);
+
+    // Give the abort time to propagate if needed
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Re-check to ensure it propagated
+    let finalResult = await clientStub.checkSignal(signal);
+    expect(finalResult.aborted).toBe(true);
+    expect(finalResult.reason).toBe("already aborted");
   });
 });

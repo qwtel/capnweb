@@ -51,7 +51,7 @@ interface StubBase<T extends RpcCompatible<T>> extends Disposable {
 export type Stub<T extends RpcCompatible<T>> =
   (T extends object ? Provider<T> : T) &
   (T extends (...args: infer P) => infer R
-    ? (...args: UnstubifyAll<P>) => Result<Awaited<R>>
+    ? (...args: UnstubifyAll<P>) => RpcResult<Awaited<R>>
     : unknown) &
   StubBase<T>;
 
@@ -133,10 +133,10 @@ type MaybeDisposable<T> = T extends object ? Disposable : unknown;
 type MapMethod<T> =
   T extends Array<infer U>
     ? {
-        map<V>(callback: (elem: U) => V): Result<Array<V>>;
+        map<V>(callback: (elem: U) => V): RpcResult<Array<V>>;
       }
     : {
-        map<V>(callback: (value: NonNullable<T>) => V): Result<Array<V>>;
+        map<V>(callback: (value: NonNullable<T>) => V): RpcResult<Array<V>>;
       };
 
 // Type for method return or property on an RPC interface.
@@ -147,8 +147,9 @@ type MapMethod<T> =
 // Technically, we use custom thenables here, but they quack like `Promise`s.
 // Intersecting with `Stub<R>` allows pipelining.
 // prettier-ignore
-type Result<R> =
-  R extends Stubable ? RpcStubResult<R>
+type RpcResult<R> =
+  R extends StubBase<any> ? R
+  : R extends Stubable ? RpcStubResult<R>
   : R extends RpcCompatible<R> ? RpcPromiseResult<R>
   : never;
 
@@ -163,8 +164,8 @@ type RpcPromiseResult<T extends RpcCompatible<T>> =
 // For properties, rewrite types to be `Result`s.
 // In each case, unwrap `Promise`s.
 type MethodOrProperty<V> = V extends (...args: infer P) => infer R
-  ? (...args: UnstubifyAll<P>) => Result<Awaited<R>>
-  : Result<Awaited<V>>;
+  ? (...args: UnstubifyAll<P>) => RpcResult<Awaited<R>>
+  : RpcResult<Awaited<V>>;
 
 // Base type for all other types providing RPC-like interfaces.
 // Rewrites all methods/properties to be `MethodOrProperty`s, but not callable types.

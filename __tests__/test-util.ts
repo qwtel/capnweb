@@ -26,6 +26,19 @@ function throwErrorImpl(): never {
   throw new RangeError("test error");
 }
 
+export class SubSubTestTarget extends RpcTarget {
+  getValue() { return 42; }
+}
+
+export class SubTestTarget extends RpcTarget {
+  squareRoot(i: number) { 
+    return Math.sqrt(i);
+  }
+  getSubSubTarget() {
+    return new SubSubTestTarget();
+  }
+}
+
 export class TestTarget extends RpcTarget {
   square(i: number) {
     return i * i;
@@ -66,5 +79,80 @@ export class TestTarget extends RpcTarget {
   fill255<T extends TypedArray>(x: T): T {
     new Uint8Array(x.buffer, x.byteOffset, x.byteLength).fill(255);
     return x;
+  }
+
+  async getSubTarget(): Promise<SubTestTarget> {
+    await new Promise(queueMicrotask);
+    return new SubTestTarget();
+  }
+
+  async getSubSubTarget(x: RpcStub<SubTestTarget>) {
+    return x.getSubSubTarget();
+  }
+
+  async acceptCalculation(calculation: Promise<number>) {
+    await new Promise(queueMicrotask);
+    await calculation;
+  }
+}
+
+export function setSubStub(value: RpcStub<SubTestTarget>): void {
+  value;
+}
+export function setSubSubStub(value: RpcStub<SubSubTestTarget>): void {
+  value;
+}
+
+
+export class UnhandledRejectionTracker {
+  private rejections: Array<{ error: any; timestamp: number }> = [];
+  private nodeHandler: ((reason: any, promise: Promise<any>) => void) | null = null;
+  private browserHandler: ((event: any) => void) | null = null;
+
+  start() {
+    if (typeof process !== 'undefined' && process.on) {
+      this.nodeHandler = (reason: any, _promise: Promise<any>) => {
+        this.rejections.push({ error: reason, timestamp: Date.now() });
+        console.warn('📋 Tracked unhandled rejection:', reason);
+      };
+      process.on('unhandledRejection', this.nodeHandler);
+    } else if (typeof window !== 'undefined') {
+      this.browserHandler = (event: any) => {
+        this.rejections.push({ error: event.reason, timestamp: Date.now() });
+        console.warn('📋 Tracked unhandled rejection:', event.reason);
+      };
+      window.addEventListener('unhandledrejection', this.browserHandler);
+    }
+  }
+
+  stop() {
+    if (this.nodeHandler && typeof process !== 'undefined' && process.off) {
+      process.off('unhandledRejection', this.nodeHandler);
+      this.nodeHandler = null;
+    }
+    if (this.browserHandler && typeof window !== 'undefined') {
+      window.removeEventListener('unhandledrejection', this.browserHandler);
+      this.browserHandler = null;
+    }
+  }
+
+  getRejections() {
+    return [...this.rejections];
+  }
+
+  clear() {
+    this.rejections.length = 0;
+  }
+
+  hasRejections() {
+    return this.rejections.length > 0;
+  }
+
+  expectRejection(matcher: (error: any) => boolean): boolean {
+    return this.rejections.some(({ error }) => matcher(error));
+  }
+
+  [Symbol.dispose]() {
+    this.stop();
   }
 }

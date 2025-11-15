@@ -1,7 +1,3 @@
-// Copyright (c) 2025 Cloudflare, Inc.
-// Licensed under the MIT license found in the LICENSE.txt file or at:
-//     https://opensource.org/license/mit
-
 import * as v8 from "node:v8";
 
 import { Codec, WireMessage } from "../codec.js";

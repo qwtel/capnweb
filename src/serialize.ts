@@ -46,6 +46,40 @@ const ERROR_TYPES: Record<string, any> = {
   // TODO: DOMError? Others?
 };
 
+// Converts an AbortSignal to a Promise that resolves when the signal is aborted.
+function abortSignalToPromise(signal: AbortSignal): Promise<any> {
+  return signal.aborted
+    ? Promise.resolve(signal.reason)
+    : new Promise<any>((resolve) => {
+        signal.addEventListener('abort', () => resolve(signal.reason), { once: true });
+      });
+}
+
+// Converts a Promise (that resolves with an abort reason) to an AbortSignal.
+// Used by the receiver to convert incoming promise-tagged-as-abort-signal back to AbortSignal.
+function promiseToAbortSignal(promise: RpcPromise): AbortSignal {
+  const controller = new AbortController();
+  promise.then(
+    (reason) => controller.abort(reason),
+    () => {} // Ignore rejection - signal stays non-aborted
+  );
+  return controller.signal;
+}
+
+// Adds explicit disposal support to an AbortSignal that wraps an RpcPromise.
+// When disposed, unregisters from GC cleanup and disposes the underlying promise.
+function addDisposalToAbortSignal(signal: AbortSignal, promise: RpcPromise, importer: Importer): void {
+  Object.defineProperty(signal, Symbol.dispose, {
+    value: () => {
+      importer.unregisterGCCleanup?.(signal);
+      promise[Symbol.dispose]();
+    },
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+}
+
 // Polyfill type for UInt8Array.toBase64(), which has started landing in JS runtimes but is not
 // supported everywhere just yet.
 interface ToBase64 {
@@ -288,18 +322,38 @@ export class Devaluator {
         return this.devaluateHook("promise", hook);
       }
 
+      case "native-promise":
+      case "abort-signal": {
+        if (!this.source) {
+          throw new Error("Can't serialize RPC stubs in this context.");
+        }
+
+        // Both native promises and abort signals follow the same pattern:
+        // Convert to Promise → Hook → Export with flag
+        // The flag tells receiver how to handle it:
+        // - "native-promise": Deliver as RpcPromise
+        // - "abort-signal": Convert to AbortSignal
+        let promise = kind === "abort-signal" 
+          ? abortSignalToPromise(<AbortSignal>value)
+          : <Promise<unknown>>value;
+        
+        let hook = this.source.getHookForNativePromise(promise);
+        
+        return this.devaluateHook("promise", hook, kind);
+      }
+
       default:
         kind satisfies never;
         throw new Error("unreachable");
     }
   }
 
-  private devaluateHook(type: "export" | "promise", hook: StubHook): unknown {
+  private devaluateHook(type: "export" | "promise", hook: StubHook, ...meta: string[]): unknown {
     if (!this.exports) this.exports = [];
     let exportId = type === "promise" ? this.exporter.exportPromise(hook)
                                       : this.exporter.exportStub(hook);
     this.exports.push(exportId);
-    return [type, exportId];
+    return [type, exportId, ...meta];
   }
 }
 
@@ -357,8 +411,16 @@ export function raw<T extends object>(x: T, level: RawFeatures = RawFeatures.JSO
 
 export interface Importer {
   importStub(idx: ImportId): StubHook;
-  importPromise(idx: ImportId): StubHook;
+  importPromise(idx: ImportId, suppressUnhandledRejections?: boolean): StubHook;
   getExport(idx: ExportId): StubHook | undefined;
+  
+  // Register an object (native Promise or AbortSignal) for GC-based cleanup.
+  // When the object is garbage collected, the import will be automatically released.
+  registerForGCCleanup?(target: object, importId: ImportId, remoteRefcount: number): void;
+  
+  // Unregister an object from GC-based cleanup (called when explicitly disposed).
+  // Prevents double-release when an object is both explicitly disposed and GC'd.
+  unregisterGCCleanup?(target: object): void;
 }
 
 class NullImporter implements Importer {
@@ -611,8 +673,22 @@ export class Evaluator {
           // is automatically also being pulled, otherwise it is not.
           if (typeof value[1] == "number") {
             if (value[0] == "promise") {
-              let hook = this.importer.importPromise(value[1]);
+              let hook = this.importer.importPromise(value[1], !!value[2]);
               let promise = new RpcPromise(hook, []);
+              
+              // Handle different promise types based on flag
+              if (value[2] === "native-promise") {
+                // this.importer.registerForGCCleanup?.(promise, value[1], 1);
+                return promise;
+              } else if (value[2] === "abort-signal") {
+                let signal = promiseToAbortSignal(promise);
+                this.importer.registerForGCCleanup?.(signal, value[1], 1);
+                // Optional: Add explicit disposal support to the AbortSignal
+                addDisposalToAbortSignal(signal, promise, this.importer);
+                return signal;
+              }
+
+              // RpcTarget promises: Auto-pull and substitute resolved value before delivery
               this.promises.push({parent, property, promise});
               return promise;
             } else {

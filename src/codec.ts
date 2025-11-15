@@ -94,7 +94,8 @@ export class JsonCodec implements Codec {
       case RpcPromise.prototype:
         return "rpc-promise";
 
-      // TODO: Promise<T> or thenable
+      case Promise.prototype:
+        return "native-promise";
 
       default:
         if (workersModule) {
@@ -121,6 +122,15 @@ export class JsonCodec implements Codec {
 
         if (value instanceof Error) {
           return "error";
+        }
+
+        // Check if it's a thenable (includes native Promises and other promise-like objects)
+        if (value && typeof (<any>value).then === 'function') {
+          return "native-promise";
+        }
+
+        if (value instanceof AbortSignal) {
+          return "abort-signal";
         }
 
         return "unsupported";

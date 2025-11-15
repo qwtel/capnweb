@@ -42,7 +42,7 @@ export type PropertyPath = (string | number)[];
 
 export type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
     "bigint" | "bytes" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" |
-    "error-raw" | "undefined" | "raw" | "raw-subtree";
+    "error-raw" | "undefined" | "raw" | "raw-subtree" | "abort-signal" | "native-promise";
 
 export const typeForRpc = JSON_CODEC.typeForRpc;
 
@@ -698,6 +698,18 @@ export class RpcPayload {
     }
   }
 
+  // Get a StubHook for a native Promise, converting it to the RPC promise infrastructure.
+  public getHookForNativePromise(promise: PromiseLike<unknown>): StubHook {
+    // Convert native promise resolution to RpcPayload, then wrap in a hook
+    // Handle both resolution and rejection
+    return new PromiseStubHook(
+      Promise.resolve(promise).then(
+        resolved => new PayloadStubHook(RpcPayload.fromAppReturn(resolved)), 
+        error => new ErrorStubHook(error)
+      )
+    );
+  }
+
   private deepCopy(
       value: unknown, oldParent: object | undefined, property: string | number, parent: object,
       dupStubs: boolean, owner: RpcPayload | null): unknown {
@@ -786,6 +798,10 @@ export class RpcPayload {
         this.promises!.push({parent, property, promise});
         return promise;
       }
+
+      case "native-promise":
+      case "abort-signal":
+        return value;
 
       default:
         kind satisfies never;
@@ -1040,6 +1056,10 @@ export class RpcPayload {
         // Since thenables are promises, we don't own them, so we don't dispose them.
         return;
 
+      case "native-promise":
+      case "abort-signal":
+        return;
+
       default:
         kind satisfies never;
         return;
@@ -1104,6 +1124,10 @@ export class RpcPayload {
 
       case "rpc-thenable":
         (<any>value).then((_: any) => {}, (_: any) => {});
+        return;
+
+      case "native-promise":
+      case "abort-signal":
         return;
 
       default:
@@ -1214,7 +1238,9 @@ function followPath(value: unknown, parent: object | undefined,
       case "date":
       case "error":
       case "error-raw":
-        // These have no properties that can be accessed remotely.
+      case "native-promise":
+      case "abort-signal":
+        // These have no properties that can be accessed remotely
         value = undefined;
         break;
 

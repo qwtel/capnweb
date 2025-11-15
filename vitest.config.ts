@@ -10,6 +10,7 @@ export default defineConfig({
   },
   test: {
     globalSetup: ['__tests__/test-server.ts'],
+    setupFiles: ['__tests__/setup.ts'],
     projects: [
       // Node.js
       {

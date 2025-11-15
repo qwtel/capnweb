@@ -10,7 +10,9 @@ import { newWebSocketRpcSession as newWebSocketRpcSessionImpl,
          newWorkersWebSocketRpcResponse } from "./websocket.js";
 import { newHttpBatchRpcSession as newHttpBatchRpcSessionImpl,
          newHttpBatchRpcResponse, nodeHttpBatchRpcResponse } from "./batch.js";
-import { newMessagePortRpcSession as newMessagePortRpcSessionImpl } from "./messageport.js";
+import { newMessagePortRpcSession as newMessagePortRpcSessionImpl,
+         newEndpointRpcSession as newEndpointRpcSessionImpl, Endpoint
+ } from "./messageport.js";
 import { newChromeExtensionRpcSession as newChromeExtensionRpcSessionImpl,
          newChromeExtensionRpcBackgroundService as newChromeExtensionRpcBackgroundServiceImpl } from "./chrome-extension.js";
 import { forceInitMap } from "./map.js";
@@ -102,7 +104,7 @@ export const RpcTarget: {
  * Empty interface used as default type parameter for sessions where the other side doesn't
  * necessarily export a main interface.
  */
-interface Empty {}
+export interface Empty {}
 
 /**
  * Start a WebSocket session given either an already-open WebSocket or a URL.
@@ -135,6 +137,12 @@ export let newHttpBatchRpcSession:<T extends RpcCompatible<T>>
 export let newMessagePortRpcSession:<T extends RpcCompatible<T> = Empty>
     (port: MessagePort, localMain?: any, options?: RpcSessionOptions) => RpcStub<T> =
     <any>newMessagePortRpcSessionImpl;
+
+export let newEndpointRpcSession:<T extends RpcCompatible<T> = Empty>
+    (endpoint: Endpoint, localMain?: any, options?: RpcSessionOptions) => RpcStub<T> =
+    <any>newEndpointRpcSessionImpl;
+  
+export type { Endpoint };
 
 /**
  * Initiate an RPC session over Chrome extension messaging APIs.

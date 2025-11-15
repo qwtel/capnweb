@@ -6,6 +6,7 @@ import { defineConfig } from 'tsup'
 
 export default defineConfig({
   entry: ['src/index.ts', 'src/index-workers.ts'],
+  outDir: process.env.OUT_DIR || 'dist',
   format: ['esm'],
   external: ['cloudflare:workers'],
   dts: true,

@@ -10,13 +10,18 @@ import { POSTMESSAGE_CODEC } from "./postmessage-codec.js";
 const MESSAGE = '@cloudflare/capnweb/message';
 const CLOSE = '@cloudflare/capnweb/close';
 
-// Generic postMessage-style endpoint.
-// Security concerns (e.g., targetOrigin) are intentionally not modeled here.
-export interface Endpoint {
-  postMessage(message: any, ...args: any[]): any;
-  addEventListener(type: "message" | "messageerror", listener: (event: MessageEvent) => void, ...args: any[]): any;
+interface MessageEventTarget<T> {
+  addEventListener<K extends keyof MessageEventTargetEventMap>(type: K, listener: (this: T, ev: MessageEventTargetEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener<K extends keyof MessageEventTargetEventMap>(type: K, listener: (this: T, ev: MessageEventTargetEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+}
+
+export interface Endpoint extends MessageEventTarget<Endpoint> {
+  postMessage(message: any, transfer?: Transferable[]|StructuredSerializeOptions): void;
   start?: () => void;
   close?: () => void;
+  [Symbol.dispose]?: () => void;
 }
 
 // Start a MessagePort session given a MessagePort or a pair of MessagePorts.

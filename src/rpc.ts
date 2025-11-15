@@ -45,7 +45,12 @@ type ExportTableEntry = {
 
 // Entry on the imports table.
 class ImportTableEntry {
-  constructor(public session: RpcSessionImpl, public importId: number, pulling: boolean) {
+  constructor(
+    public session: RpcSessionImpl,
+    public importId: number,
+    pulling: boolean,
+    private suppressDisposalRejection?: boolean
+  ) {
     if (pulling) {
       this.activePull = Promise.withResolvers<void>();
     }
@@ -131,6 +136,10 @@ class ImportTableEntry {
 
       if (this.activePull) {
         this.activePull.reject(error);
+        // Suppress unhandled rejection for user-level promises that may never be awaited
+        if (this.suppressDisposalRejection) {
+          this.activePull.promise.catch(() => {});
+        }
         this.activePull = undefined;
       }
 
@@ -329,6 +338,24 @@ class RpcSessionImpl implements Importer, Exporter {
   // may be deleted from the middle (hence leaving the array sparse).
   onBrokenCallbacks: ((error: any) => void)[] = [];
 
+  // FinalizationRegistry for GC-based cleanup of native promises and abort signals.
+  // 
+  // Native promises and abort signals are "fire-and-forget" from the user's perspective - they
+  // don't expect to manually dispose them. When the RpcPromise or AbortSignal object is GC'd,
+  // we automatically send a release message to free resources on the sender side.
+  //
+  // This is different from RpcStub/RpcTarget promises which use explicit resource management
+  // via Symbol.dispose (the `using` keyword).
+  private cleanupRegistry = new FinalizationRegistry<{importId: ImportId, remoteRefcount: number}>((
+    {importId, remoteRefcount}
+  ) => {
+    // When the object is GC'd, release the import (only if session isn't already aborted)
+    if (!this.abortReason) {
+      // Send release message for the import
+      this.sendRelease(importId, remoteRefcount);
+    }
+  });
+
   constructor(private transport: RpcTransport, mainHook: StubHook,
       private options: RpcSessionOptions) {
     // Export zero is automatically the bootstrap object.
@@ -496,7 +523,7 @@ class RpcSessionImpl implements Importer, Exporter {
     return new RpcImportHook(/*isPromise=*/false, entry);
   }
 
-  importPromise(idx: ImportId): StubHook {
+  importPromise(idx: ImportId, suppressUnhandledRejections?: boolean): StubHook {
     if (this.abortReason) throw this.abortReason;
 
     if (this.imports[idx]) {
@@ -506,7 +533,7 @@ class RpcSessionImpl implements Importer, Exporter {
     }
 
     // Create an already-pulling hook.
-    let entry = new ImportTableEntry(this, idx, true);
+    let entry = new ImportTableEntry(this, idx, true, suppressUnhandledRejections);
     this.imports[idx] = entry;
     return new RpcImportHook(/*isPromise=*/true, entry);
   }
@@ -604,6 +631,14 @@ class RpcSessionImpl implements Importer, Exporter {
     delete this.imports[id];
   }
 
+  registerForGCCleanup(target: object, importId: ImportId, remoteRefcount: number) {
+    this.cleanupRegistry.register(target, {importId, remoteRefcount}, target);
+  }
+
+  unregisterGCCleanup(target: object) {
+    this.cleanupRegistry.unregister(target);
+  }
+
   abort(error: any, trySendAbortMessage: boolean = true) {
     // Don't double-abort.
     if (this.abortReason !== undefined) return;
@@ -655,6 +690,10 @@ class RpcSessionImpl implements Importer, Exporter {
       this.imports[i].abort(error);
     }
     for (let i in this.exports) {
+      // Suppress unhandled rejections from pending pulls (e.g., never-resolving promises)
+      // if (this.exports[i].pull) {
+      //   this.exports[i].pull.catch(() => {});
+      // }
       this.exports[i].hook.dispose();
     }
   }
