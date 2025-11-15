@@ -65,9 +65,10 @@ type TypedArray =
   | Int32Array
   | BigUint64Array
   | BigInt64Array
-  | Float16Array
   | Float32Array
-  | Float64Array;
+  | Float64Array
+  // @ts-ignore: Float16Array may not exist in all TypeScript environments
+  | (typeof Float16Array extends undefined ? never : Float16Array);
 
 // This represents all the types that can be sent as-is over an RPC boundary
 type BaseType =
