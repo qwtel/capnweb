@@ -104,7 +104,7 @@ function typedArrayType(x: unknown): string {
   if (x instanceof Int8Array) return 'int8';
   if (x instanceof Int16Array) return 'int16';
   if (x instanceof Int32Array) return 'int32';
-  if (x instanceof Float16Array) return 'float16';
+  if (x instanceof globalThis.Float16Array) return 'float16';
   if (x instanceof Float32Array) return 'float32';
   if (x instanceof Float64Array) return 'float64';
   if (x instanceof BigInt64Array) return 'bigint64';
@@ -119,7 +119,7 @@ const TYPED_ARRAY_TYPES = {
   'int8': Int8Array,
   'int16': Int16Array,
   'int32': Int32Array,
-  'float16': Float16Array,
+  'float16': globalThis.Float16Array,
   'float32': Float32Array,
   'float64': Float64Array,
   'bigint64': BigInt64Array,
